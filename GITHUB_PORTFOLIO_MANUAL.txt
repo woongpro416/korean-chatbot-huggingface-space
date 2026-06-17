@@ -1,0 +1,130 @@
+GitHub 포트폴리오 업로드 매뉴얼
+작성일: 2026-06-17
+프로젝트: 개인 한글 챗봇
+
+1. 목적
+
+이 저장소는 Hugging Face Spaces에 배포 가능한 개인 한글 챗봇 프로젝트를 포트폴리오로 정리하기 위한 저장소이다.
+
+포트폴리오에서 보여줄 핵심 포인트:
+
+- FastAPI 기반 웹 애플리케이션
+- Hugging Face Transformers 모델 연동
+- Docker 기반 배포
+- Hugging Face Spaces 무료 배포 경험
+- 브라우저 채팅 UI와 REST API 동시 제공
+- README와 배포 매뉴얼 문서화
+
+2. GitHub에 올릴 파일
+
+GitHub 저장소에는 아래 파일을 포함한다.
+
+- app.py
+- requirements.txt
+- Dockerfile
+- README.md
+- HUGGINGFACE_DEPLOY_MANUAL.txt
+- GITHUB_PORTFOLIO_MANUAL.txt
+
+선택적으로 포함할 수 있는 파일:
+
+- .gitignore
+- LICENSE
+- screenshots/
+
+올리지 않을 파일:
+
+- venv/
+- __pycache__/
+- .env
+- 모델 캐시 폴더
+- 개인 토큰 또는 비밀번호가 들어간 파일
+
+3. 권장 .gitignore
+
+아래 내용을 .gitignore에 넣는다.
+
+venv/
+__pycache__/
+*.pyc
+.env
+.cache/
+hf_cache/
+model_cache/
+*.log
+.DS_Store
+
+4. GitHub 저장소 생성
+
+1) GitHub에 로그인한다.
+2) New repository를 클릭한다.
+3) Repository name을 입력한다.
+
+예:
+korean-chatbot-huggingface-space
+
+4) Public 또는 Private을 선택한다.
+5) 포트폴리오용이면 Public을 권장한다.
+6) Create repository를 클릭한다.
+
+5. 로컬 프로젝트 Git 초기화
+
+PowerShell에서 프로젝트 폴더로 이동한다.
+
+cd C:\jwdev\chatbot
+
+Git 저장소를 초기화한다.
+
+git init
+git add .
+git commit -m "Initial chatbot deployment project"
+
+GitHub 원격 저장소를 연결한다.
+
+git remote add origin https://github.com/사용자명/저장소명.git
+git branch -M main
+git push -u origin main
+
+6. README에 넣으면 좋은 내용
+
+README.md에는 아래 내용을 포함한다.
+
+- 프로젝트 소개
+- 주요 기능
+- 사용 기술
+- 로컬 실행 방법
+- Hugging Face 배포 방법
+- 배포된 서비스 URL
+- API 예시
+- 한계와 개선 계획
+
+7. 포트폴리오 설명 예시
+
+프로젝트명:
+Hugging Face 기반 개인 한글 챗봇
+
+설명:
+FastAPI와 Hugging Face Transformers를 사용해 만든 개인 한글 챗봇입니다.
+Docker 기반으로 Hugging Face Spaces에 배포했으며, 브라우저 채팅 UI와 REST API를 함께 제공합니다.
+
+기술 스택:
+Python, FastAPI, Pydantic, Transformers, PyTorch, Docker, Hugging Face Spaces
+
+개선 계획:
+
+- 더 좋은 instruction/chat 모델 적용
+- 대화 히스토리 서버 저장
+- 사용자 인증 추가
+- 질문/답변 로그 저장
+- RAG 기반 개인 문서 질의응답 추가
+- 테스트 코드와 CI 추가
+
+8. 스크린샷 준비
+
+포트폴리오용으로 아래 화면을 캡처해 screenshots/ 폴더에 저장하면 좋다.
+
+- 채팅 화면
+- Swagger UI /docs 화면
+- Hugging Face Space Running 화면
+- GitHub 저장소 README 화면
+
