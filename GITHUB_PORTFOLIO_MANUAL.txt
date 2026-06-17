@@ -4,16 +4,17 @@ GitHub 포트폴리오 업로드 매뉴얼
 
 1. 목적
 
-이 저장소는 Hugging Face Spaces에 배포 가능한 개인 한글 챗봇 프로젝트를 포트폴리오로 정리하기 위한 저장소이다.
+이 저장소는 FastAPI, SQLite, Hugging Face Transformers, Docker를 사용한 개인 한글 챗봇 프로젝트를 포트폴리오로 정리하기 위한 저장소이다.
 
 포트폴리오에서 보여줄 핵심 포인트:
 
 - FastAPI 기반 웹 애플리케이션
-- Hugging Face Transformers 모델 연동
-- Docker 기반 배포
-- Hugging Face Spaces 무료 배포 경험
+- Hugging Face instruction/chat 모델 연동
+- SQLite 기반 대화 히스토리 저장
+- 사용자 피드백 저장
+- 긍정 피드백 기반 training-data.jsonl export
+- Docker 기반 Hugging Face Spaces 배포
 - 브라우저 채팅 UI와 REST API 동시 제공
-- README와 배포 매뉴얼 문서화
 
 2. GitHub에 올릴 파일
 
@@ -23,12 +24,10 @@ GitHub 저장소에는 아래 파일을 포함한다.
 - requirements.txt
 - Dockerfile
 - README.md
-- HUGGINGFACE_DEPLOY_MANUAL.txt
-- GITHUB_PORTFOLIO_MANUAL.txt
+- .gitignore
 
 선택적으로 포함할 수 있는 파일:
 
-- .gitignore
 - LICENSE
 - screenshots/
 
@@ -37,22 +36,28 @@ GitHub 저장소에는 아래 파일을 포함한다.
 - venv/
 - __pycache__/
 - .env
+- data/
 - 모델 캐시 폴더
 - 개인 토큰 또는 비밀번호가 들어간 파일
+- HUGGINGFACE_DEPLOY_MANUAL.txt
+- GITHUB_PORTFOLIO_MANUAL.txt
 
 3. 권장 .gitignore
 
-아래 내용을 .gitignore에 넣는다.
+현재 .gitignore에는 아래 항목을 포함한다.
 
 venv/
 __pycache__/
 *.pyc
 .env
 .cache/
+data/
 hf_cache/
 model_cache/
 *.log
 .DS_Store
+HUGGINGFACE_DEPLOY_MANUAL.txt
+GITHUB_PORTFOLIO_MANUAL.txt
 
 4. GitHub 저장소 생성
 
@@ -60,12 +65,11 @@ model_cache/
 2) New repository를 클릭한다.
 3) Repository name을 입력한다.
 
-예:
+추천:
 korean-chatbot-huggingface-space
 
-4) Public 또는 Private을 선택한다.
-5) 포트폴리오용이면 Public을 권장한다.
-6) Create repository를 클릭한다.
+4) 포트폴리오용이면 Public을 권장한다.
+5) Create repository를 클릭한다.
 
 5. 로컬 프로젝트 Git 초기화
 
@@ -77,11 +81,11 @@ Git 저장소를 초기화한다.
 
 git init
 git add .
-git commit -m "Initial chatbot deployment project"
+git commit -m "Build production-style Korean chatbot"
 
 GitHub 원격 저장소를 연결한다.
 
-git remote add origin https://github.com/사용자명/저장소명.git
+git remote add origin https://github.com/사용자명/korean-chatbot-huggingface-space.git
 git branch -M main
 git push -u origin main
 
@@ -94,7 +98,6 @@ README.md에는 아래 내용을 포함한다.
 - 사용 기술
 - 로컬 실행 방법
 - Hugging Face 배포 방법
-- 배포된 서비스 URL
 - API 예시
 - 한계와 개선 계획
 
@@ -105,19 +108,18 @@ Hugging Face 기반 개인 한글 챗봇
 
 설명:
 FastAPI와 Hugging Face Transformers를 사용해 만든 개인 한글 챗봇입니다.
-Docker 기반으로 Hugging Face Spaces에 배포했으며, 브라우저 채팅 UI와 REST API를 함께 제공합니다.
+Docker 기반으로 Hugging Face Spaces에 배포할 수 있으며, 브라우저 채팅 UI, REST API, SQLite 대화 저장, 사용자 피드백 저장, 학습 데이터 export 기능을 제공합니다.
 
 기술 스택:
-Python, FastAPI, Pydantic, Transformers, PyTorch, Docker, Hugging Face Spaces
+Python, FastAPI, Pydantic, SQLite, Transformers, PyTorch, Docker, Hugging Face Spaces
 
 개선 계획:
 
-- 더 좋은 instruction/chat 모델 적용
-- 대화 히스토리 서버 저장
-- 사용자 인증 추가
-- 질문/답변 로그 저장
-- RAG 기반 개인 문서 질의응답 추가
-- 테스트 코드와 CI 추가
+- 인증 적용
+- 관리자용 피드백 대시보드
+- RAG 기반 개인 문서 질의응답
+- LoRA fine-tuning 파이프라인
+- 테스트 코드와 GitHub Actions CI
 
 8. 스크린샷 준비
 

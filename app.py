@@ -1,20 +1,30 @@
 import json
 import os
 import re
+import sqlite3
 import time
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, Optional
 
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-MODEL_ID = os.getenv("MODEL_ID", "skt/kogpt2-base-v2")
+MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
 PORT = int(os.getenv("PORT", "7860"))
+DB_PATH = Path(os.getenv("DB_PATH", "data/chatbot.sqlite3"))
+SYSTEM_PROMPT = (
+    "너는 포트폴리오용 개인 한글 챗봇이다. "
+    "답변은 한국어로, 짧고 명확하게 한다. "
+    "모르는 내용은 추측하지 말고 모른다고 말한다."
+)
 
 tokenizer = None
 model = None
@@ -35,18 +45,22 @@ class UTF8JSONResponse(JSONResponse):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=500, description="사용자 메시지")
-    max_new_tokens: int = Field(80, ge=20, le=180, description="새로 생성할 최대 토큰 수")
-    temperature: float = Field(0.7, ge=0.1, le=1.2, description="응답 다양성")
-    top_k: int = Field(40, ge=1, le=100, description="샘플링 후보 토큰 수")
+    session_id: Optional[str] = Field(None, description="대화 세션 ID. 없으면 새로 생성")
+    user_id: str = Field("anonymous", max_length=80, description="사용자 식별자")
+    message: str = Field(..., min_length=1, max_length=800, description="사용자 메시지")
+    max_new_tokens: int = Field(160, ge=20, le=300, description="새로 생성할 최대 토큰 수")
+    temperature: float = Field(0.6, ge=0.1, le=1.2, description="응답 다양성")
+    top_p: float = Field(0.9, ge=0.1, le=1.0, description="누적 확률 샘플링 값")
 
     model_config = {
         "json_schema_extra": {
             "example": {
+                "session_id": None,
+                "user_id": "anonymous",
                 "message": "안녕하세요",
-                "max_new_tokens": 80,
-                "temperature": 0.7,
-                "top_k": 40,
+                "max_new_tokens": 160,
+                "temperature": 0.6,
+                "top_p": 0.9,
             }
         }
     }
@@ -55,39 +69,196 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
+    session_id: str
+    message_id: str
     user_message: str
     bot_response: str
     response_type: Literal["rule", "model"]
-    model_used: str
+    llm_name: str
     device: str
     processing_time_ms: float
     tokens_generated: Optional[int] = None
 
 
-class HealthResponse(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
+class FeedbackRequest(BaseModel):
+    message_id: str = Field(..., description="평가할 챗봇 응답 message_id")
+    rating: Literal["up", "down"] = Field(..., description="좋아요 또는 싫어요")
+    comment: Optional[str] = Field(None, max_length=500, description="선택 피드백 메모")
 
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+    feedback_id: str
+    message: str
+
+
+class HistoryMessage(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    response_type: Optional[str] = None
+    llm_name: Optional[str] = None
+    processing_time_ms: Optional[float] = None
+    tokens_generated: Optional[int] = None
+    feedback_rating: Optional[int] = None
+    created_at: str
+
+
+class HistoryResponse(BaseModel):
+    session_id: str
+    messages: list[HistoryMessage]
+
+
+class HealthResponse(BaseModel):
     status: str
-    model_loaded: bool
-    model_used: str
+    loaded: bool
+    llm_name: str
     device: str
+    database_path: str
     uptime_seconds: int
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def get_db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db() -> None:
+    with get_db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                response_type TEXT,
+                model_used TEXT,
+                processing_time_ms REAL,
+                tokens_generated INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                rating INTEGER NOT NULL CHECK (rating IN (-1, 1)),
+                comment TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_session_created
+            ON messages(session_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_feedback_message
+            ON feedback(message_id);
+            """
+        )
+
+
+def ensure_session(session_id: Optional[str], user_id: str) -> str:
+    init_db()
+    sid = session_id or str(uuid.uuid4())
+    now = utc_now()
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM sessions WHERE id = ?", (sid,)).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE sessions SET updated_at = ?, user_id = ? WHERE id = ?",
+                (now, user_id, sid),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (sid, user_id, now, now),
+            )
+    return sid
+
+
+def save_message(
+    session_id: str,
+    role: Literal["user", "assistant"],
+    content: str,
+    response_type: Optional[str] = None,
+    model_used: Optional[str] = None,
+    processing_time_ms: Optional[float] = None,
+    tokens_generated: Optional[int] = None,
+) -> str:
+    init_db()
+    message_id = str(uuid.uuid4())
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO messages (
+                id, session_id, role, content, response_type, model_used,
+                processing_time_ms, tokens_generated, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                session_id,
+                role,
+                content,
+                response_type,
+                model_used,
+                processing_time_ms,
+                tokens_generated,
+                utc_now(),
+            ),
+        )
+        conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (utc_now(), session_id))
+    return message_id
+
+
+def get_recent_history(session_id: str, limit: int = 8) -> list[dict[str, str]]:
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT role, content
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+
+    messages = []
+    for row in reversed(rows):
+        role = "assistant" if row["role"] == "assistant" else "user"
+        messages.append({"role": role, "content": row["content"]})
+    return messages
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global tokenizer, model
 
+    init_db()
     print(f"[STARTUP] Loading model: {MODEL_ID}")
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        bos_token="</s>",
-        eos_token="</s>",
-        unk_token="<unk>",
-        pad_token="<pad>",
-        mask_token="<mask>",
-    )
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID).to(device)
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+    ).to(device)
     model.eval()
     print(f"[STARTUP] Model loaded on {device}")
 
@@ -100,8 +271,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Personal Korean Chatbot",
-    description="FastAPI와 Hugging Face KoGPT2로 만든 포트폴리오용 한글 챗봇",
-    version="2.0.0",
+    description="FastAPI, SQLite, Feedback, Hugging Face Instruct 모델 기반 실무형 챗봇",
+    version="3.0.0",
     lifespan=lifespan,
     default_response_class=UTF8JSONResponse,
 )
@@ -113,31 +284,30 @@ def normalize_text(text: str) -> str:
 
 def get_rule_based_response(user_input: str) -> Optional[str]:
     text = normalize_text(user_input)
-
     intent_responses = [
         (
             ["안녕", "하이", "반가워", "hello", "hi"],
-            "안녕하세요! 저는 FastAPI와 Hugging Face 모델로 만든 개인 한글 챗봇입니다. 간단한 질문을 입력해보세요.",
+            "안녕하세요! 저는 FastAPI와 Hugging Face Instruct 모델로 만든 개인 한글 챗봇입니다. 대화 내용과 피드백을 저장해 개선 데이터로 활용할 수 있습니다.",
         ),
         (
             ["도움", "사용법", "뭐할수", "무엇을할수", "help"],
-            "메시지를 입력하면 기본 응답 또는 AI 모델 응답을 제공합니다. 예: '인공지능이 뭐야?', '오늘 할 일 추천해줘'",
+            "질문을 입력하면 세션별 대화 기록을 참고해 답변합니다. 답변 아래의 좋아요/싫어요 버튼으로 피드백도 남길 수 있습니다.",
         ),
         (
             ["너는누구", "소개", "정체", "무슨챗봇"],
-            "저는 포트폴리오와 배포 연습을 위해 만든 개인 챗봇입니다. FastAPI, Transformers, Docker, Hugging Face Spaces로 구성되어 있습니다.",
+            "저는 포트폴리오용 실무 연습 챗봇입니다. FastAPI, SQLite, Transformers, Docker, Hugging Face Spaces로 구성되어 있습니다.",
         ),
         (
-            ["배포", "허깅페이스", "huggingface", "space"],
-            "이 앱은 Docker 기반 Hugging Face Space로 배포할 수 있습니다. app.py, requirements.txt, Dockerfile, README.md 네 파일이 핵심입니다.",
+            ["학습", "파인튜닝", "finetuning", "fine-tuning", "lora"],
+            "현재 앱은 즉석 학습을 하지는 않지만, 대화와 피드백을 SQLite에 저장합니다. 이 데이터는 나중에 LoRA나 fine-tuning 데이터셋으로 정리할 수 있습니다.",
         ),
         (
             ["깃허브", "github", "포트폴리오"],
-            "GitHub에는 코드, README, 배포 매뉴얼, 스크린샷을 함께 올리면 포트폴리오로 설명하기 좋습니다.",
+            "GitHub에는 코드, README, Dockerfile, requirements.txt, 스크린샷을 올리면 좋습니다. 로컬 배포 매뉴얼 txt는 .gitignore로 제외했습니다.",
         ),
         (
             ["고마워", "감사"],
-            "천만에요. 작은 기능부터 차근차근 개선해가면 충분히 좋은 프로젝트가 됩니다.",
+            "천만에요. 피드백이 쌓일수록 어떤 답변을 개선해야 하는지 더 명확해집니다.",
         ),
         (
             ["잘가", "종료", "bye", "goodbye"],
@@ -148,58 +318,74 @@ def get_rule_based_response(user_input: str) -> Optional[str]:
     for keywords, response in intent_responses:
         if any(keyword in text for keyword in keywords):
             return response
-
     return None
 
 
+def build_chat_messages(session_id: str, user_input: str) -> list[dict[str, str]]:
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(get_recent_history(session_id, limit=8))
+    messages.append({"role": "user", "content": user_input.strip()})
+    return messages
+
+
 def clean_generated_text(text: str) -> str:
-    cleaned = text.replace("<usr>", "").replace("<sys>", "").strip()
+    cleaned = text.strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned[:700].strip()
+    return cleaned[:1000].strip()
 
 
 def generate_model_response(
+    session_id: str,
     user_input: str,
     max_new_tokens: int,
     temperature: float,
-    top_k: int,
+    top_p: float,
 ) -> str:
     if model is None or tokenizer is None:
         raise RuntimeError("모델이 아직 로드되지 않았습니다.")
 
-    prompt = f"<usr> {user_input.strip()} <sys> "
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+    messages = build_chat_messages(session_id, user_input)
+
+    if getattr(tokenizer, "chat_template", None):
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(device)
+    else:
+        prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages) + "\nassistant:"
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
     with torch.no_grad():
         output_ids = model.generate(
-            input_ids,
+            **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=temperature,
-            top_k=top_k,
-            repetition_penalty=1.8,
-            no_repeat_ngram_size=3,
-            pad_token_id=tokenizer.pad_token_id,
+            top_p=top_p,
+            repetition_penalty=1.15,
+            pad_token_id=tokenizer.eos_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )
 
-    generated = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    response = generated.split("<sys>")[-1] if "<sys>" in generated else generated[len(prompt) :]
-    response = clean_generated_text(response)
-    return response or "죄송합니다. 답변을 생성하지 못했습니다. 다른 문장으로 다시 입력해주세요."
+    generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
+    response = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    return clean_generated_text(response) or "죄송합니다. 답변을 생성하지 못했습니다. 질문을 조금 다르게 입력해주세요."
 
 
 def generate_response(
+    session_id: str,
     user_input: str,
     max_new_tokens: int,
     temperature: float,
-    top_k: int,
+    top_p: float,
 ) -> tuple[str, Literal["rule", "model"]]:
     rule_response = get_rule_based_response(user_input)
     if rule_response:
         return rule_response, "rule"
-
-    return generate_model_response(user_input, max_new_tokens, temperature, top_k), "model"
+    return generate_model_response(session_id, user_input, max_new_tokens, temperature, top_p), "model"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -220,7 +406,7 @@ async def home():
       color: #1f2933;
     }
     .shell {
-      width: min(960px, calc(100vw - 28px));
+      width: min(1000px, calc(100vw - 28px));
       margin: 0 auto;
       padding: 24px 0;
     }
@@ -231,16 +417,8 @@ async def home():
       gap: 16px;
       margin-bottom: 14px;
     }
-    h1 {
-      margin: 0;
-      font-size: 26px;
-      line-height: 1.25;
-    }
-    .subtitle {
-      margin: 6px 0 0;
-      color: #52606d;
-      font-size: 14px;
-    }
+    h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+    .subtitle { margin: 6px 0 0; color: #52606d; font-size: 14px; }
     .status {
       display: inline-flex;
       align-items: center;
@@ -253,39 +431,25 @@ async def home():
       color: #334155;
       font-size: 13px;
     }
-    .dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: #94a3b8;
-    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #94a3b8; }
     .dot.ready { background: #16a34a; }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 260px;
+      gap: 14px;
+    }
     .chat-panel {
       display: grid;
-      grid-template-rows: minmax(420px, 62vh) auto;
+      grid-template-rows: minmax(430px, 62vh) auto;
       overflow: hidden;
       border: 1px solid #d7dee8;
       border-radius: 8px;
       background: #ffffff;
     }
-    #chat {
-      overflow-y: auto;
-      padding: 18px;
-    }
-    .message {
-      display: grid;
-      gap: 6px;
-      max-width: 78%;
-      margin: 0 0 14px;
-    }
-    .message.user {
-      margin-left: auto;
-      justify-items: end;
-    }
-    .label {
-      color: #64748b;
-      font-size: 12px;
-    }
+    #chat { overflow-y: auto; padding: 18px; }
+    .message { display: grid; gap: 6px; max-width: 82%; margin: 0 0 14px; }
+    .message.user { margin-left: auto; justify-items: end; }
+    .label { color: #64748b; font-size: 12px; }
     .bubble {
       padding: 12px 13px;
       border-radius: 8px;
@@ -294,13 +458,14 @@ async def home():
       overflow-wrap: anywhere;
       background: #eef2f7;
     }
-    .message.user .bubble {
-      background: #2563eb;
-      color: #ffffff;
-    }
-    .meta {
-      color: #64748b;
-      font-size: 12px;
+    .message.user .bubble { background: #2563eb; color: #ffffff; }
+    .meta { color: #64748b; font-size: 12px; }
+    .feedback { display: flex; gap: 6px; }
+    .feedback button {
+      min-width: 42px;
+      min-height: 30px;
+      padding: 4px 8px;
+      font-size: 13px;
     }
     .composer {
       display: grid;
@@ -328,45 +493,25 @@ async def home():
       font-size: 15px;
       cursor: pointer;
     }
-    button.primary {
-      border-color: #2563eb;
-      background: #2563eb;
-      color: #ffffff;
-    }
-    button:disabled {
-      border-color: #94a3b8;
-      background: #94a3b8;
-      color: #ffffff;
-      cursor: wait;
-    }
-    .examples {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .chip {
-      min-width: 0;
-      padding: 8px 10px;
-      border: 1px solid #cbd5e1;
+    button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
+    button:disabled { border-color: #94a3b8; background: #94a3b8; color: #ffffff; cursor: wait; }
+    aside {
+      border: 1px solid #d7dee8;
+      border-radius: 8px;
       background: #ffffff;
-      color: #334155;
-      font-size: 13px;
+      padding: 14px;
+      align-self: start;
     }
-    @media (max-width: 640px) {
-      header {
-        align-items: stretch;
-        flex-direction: column;
-      }
-      .message {
-        max-width: 92%;
-      }
-      .composer {
-        grid-template-columns: 1fr;
-      }
-      button {
-        min-height: 42px;
-      }
+    aside h2 { margin: 0 0 10px; font-size: 16px; }
+    .side-text { margin: 0 0 12px; color: #52606d; font-size: 13px; line-height: 1.5; }
+    .chips { display: grid; gap: 8px; }
+    .chip { min-width: 0; min-height: 36px; padding: 8px 10px; font-size: 13px; text-align: left; }
+    @media (max-width: 760px) {
+      header { align-items: stretch; flex-direction: column; }
+      .layout { grid-template-columns: 1fr; }
+      .message { max-width: 94%; }
+      .composer { grid-template-columns: 1fr; }
+      button { min-height: 42px; }
     }
   </style>
 </head>
@@ -375,25 +520,32 @@ async def home():
     <header>
       <div>
         <h1>Personal Korean Chatbot</h1>
-        <p class="subtitle">FastAPI + Hugging Face + Docker 배포 연습용 챗봇</p>
+        <p class="subtitle">대화 저장 · 피드백 수집 · Instruct 모델 기반 배포 연습</p>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="statusText">상태 확인 중</span></div>
     </header>
 
-    <section class="chat-panel">
-      <div id="chat"></div>
-      <form id="form" class="composer">
-        <input id="message" placeholder="메시지를 입력하세요" autocomplete="off" />
-        <button id="clear" type="button">초기화</button>
-        <button id="send" class="primary" type="submit">전송</button>
-      </form>
-    </section>
+    <div class="layout">
+      <section class="chat-panel">
+        <div id="chat"></div>
+        <form id="form" class="composer">
+          <input id="message" placeholder="메시지를 입력하세요" autocomplete="off" />
+          <button id="clear" type="button">초기화</button>
+          <button id="send" class="primary" type="submit">전송</button>
+        </form>
+      </section>
 
-    <div class="examples">
-      <button class="chip" type="button">안녕하세요</button>
-      <button class="chip" type="button">도움말</button>
-      <button class="chip" type="button">너는 누구야?</button>
-      <button class="chip" type="button">인공지능이 뭐야?</button>
+      <aside>
+        <h2>테스트 문장</h2>
+        <p class="side-text">응답 아래 좋아요/싫어요를 누르면 서버에 피드백이 저장됩니다.</p>
+        <div class="chips">
+          <button class="chip" type="button">안녕하세요</button>
+          <button class="chip" type="button">도움말</button>
+          <button class="chip" type="button">너는 누구야?</button>
+          <button class="chip" type="button">학습 기능이 있어?</button>
+          <button class="chip" type="button">인공지능을 쉽게 설명해줘</button>
+        </div>
+      </aside>
     </div>
   </main>
 
@@ -405,25 +557,14 @@ async def home():
     const clear = document.getElementById("clear");
     const dot = document.getElementById("dot");
     const statusText = document.getElementById("statusText");
-    const storageKey = "personal-korean-chatbot-history";
+    const sessionKey = "personal-korean-chatbot-session-id";
+    let sessionId = localStorage.getItem(sessionKey) || crypto.randomUUID();
+    localStorage.setItem(sessionKey, sessionId);
 
-    function saveHistory() {
-      localStorage.setItem(storageKey, chat.innerHTML);
-    }
-
-    function loadHistory() {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        chat.innerHTML = saved;
-      } else {
-        addMessage("bot", "챗봇", "안녕하세요! 배포 테스트가 끝났다면 이제 간단한 대화를 시도해보세요.");
-      }
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    function addMessage(type, label, text, meta = "") {
+    function addMessage(type, label, text, options = {}) {
       const wrapper = document.createElement("div");
       wrapper.className = `message ${type}`;
+      if (options.messageId) wrapper.dataset.messageId = options.messageId;
 
       const labelEl = document.createElement("div");
       labelEl.className = "label";
@@ -436,27 +577,76 @@ async def home():
       wrapper.appendChild(labelEl);
       wrapper.appendChild(bubble);
 
-      if (meta) {
+      if (options.meta) {
         const metaEl = document.createElement("div");
         metaEl.className = "meta";
-        metaEl.textContent = meta;
+        metaEl.textContent = options.meta;
         wrapper.appendChild(metaEl);
+      }
+
+      if (type === "bot" && options.messageId) {
+        const feedback = document.createElement("div");
+        feedback.className = "feedback";
+        feedback.innerHTML = `
+          <button type="button" data-rating="up">좋아요</button>
+          <button type="button" data-rating="down">싫어요</button>
+        `;
+        feedback.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => sendFeedback(options.messageId, button.dataset.rating, feedback));
+        });
+        wrapper.appendChild(feedback);
       }
 
       chat.appendChild(wrapper);
       chat.scrollTop = chat.scrollHeight;
-      saveHistory();
+    }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch(`/history/${sessionId}`);
+        const data = await response.json();
+        chat.innerHTML = "";
+        if (!data.messages.length) {
+          addMessage("bot", "챗봇", "안녕하세요! 이제 대화 기록과 피드백이 서버에 저장됩니다.");
+          return;
+        }
+        data.messages.forEach((message) => {
+          if (message.role === "user") {
+            addMessage("user", "나", message.content);
+          } else {
+            const meta = `${message.response_type || "assistant"} · ${message.processing_time_ms || 0}ms`;
+            addMessage("bot", "챗봇", message.content, { messageId: message.id, meta });
+          }
+        });
+      } catch (error) {
+        addMessage("bot", "챗봇", "대화 기록을 불러오지 못했습니다. 새 대화로 시작합니다.");
+      }
     }
 
     async function checkHealth() {
       try {
         const response = await fetch("/health");
         const data = await response.json();
-        dot.classList.toggle("ready", data.model_loaded);
-        statusText.textContent = data.model_loaded ? `Running · ${data.model_used}` : "모델 로딩 중";
+        dot.classList.toggle("ready", data.loaded);
+        statusText.textContent = data.loaded ? `Running · ${data.llm_name}` : "모델 로딩 중";
       } catch (error) {
         dot.classList.remove("ready");
         statusText.textContent = "연결 확인 필요";
+      }
+    }
+
+    async function sendFeedback(messageId, rating, container) {
+      container.querySelectorAll("button").forEach((button) => button.disabled = true);
+      try {
+        const response = await fetch("/feedback", {
+          method: "POST",
+          headers: {"Content-Type": "application/json; charset=utf-8"},
+          body: JSON.stringify({ message_id: messageId, rating })
+        });
+        if (!response.ok) throw new Error("feedback failed");
+        container.textContent = rating === "up" ? "좋아요가 저장되었습니다." : "싫어요가 저장되었습니다.";
+      } catch (error) {
+        container.textContent = "피드백 저장에 실패했습니다.";
       }
     }
 
@@ -470,10 +660,12 @@ async def home():
           method: "POST",
           headers: {"Content-Type": "application/json; charset=utf-8"},
           body: JSON.stringify({
+            session_id: sessionId,
+            user_id: "browser-user",
             message,
-            max_new_tokens: 80,
-            temperature: 0.7,
-            top_k: 40
+            max_new_tokens: 160,
+            temperature: 0.6,
+            top_p: 0.9
           })
         });
 
@@ -483,8 +675,10 @@ async def home():
           return;
         }
 
+        sessionId = data.session_id;
+        localStorage.setItem(sessionKey, sessionId);
         const meta = `${data.response_type} · ${data.processing_time_ms}ms`;
-        addMessage("bot", "챗봇", data.bot_response, meta);
+        addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
       } catch (error) {
         addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
       } finally {
@@ -500,9 +694,10 @@ async def home():
     });
 
     clear.addEventListener("click", () => {
-      localStorage.removeItem(storageKey);
+      sessionId = crypto.randomUUID();
+      localStorage.setItem(sessionKey, sessionId);
       chat.innerHTML = "";
-      addMessage("bot", "챗봇", "대화 내용을 초기화했습니다. 다시 시작해볼까요?");
+      addMessage("bot", "챗봇", "새 세션을 시작했습니다.");
       input.focus();
     });
 
@@ -525,24 +720,39 @@ async def home():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     start = time.time()
+    session_id = ensure_session(request.session_id, request.user_id)
+    save_message(session_id, "user", request.message)
 
     try:
         response, response_type = generate_response(
+            session_id=session_id,
             user_input=request.message,
             max_new_tokens=request.max_new_tokens,
             temperature=request.temperature,
-            top_k=request.top_k,
+            top_p=request.top_p,
         )
         elapsed_ms = (time.time() - start) * 1000
+        tokens_generated = len(response.split())
+        assistant_message_id = save_message(
+            session_id=session_id,
+            role="assistant",
+            content=response,
+            response_type=response_type,
+            model_used=MODEL_ID,
+            processing_time_ms=round(elapsed_ms, 2),
+            tokens_generated=tokens_generated,
+        )
 
         return ChatResponse(
+            session_id=session_id,
+            message_id=assistant_message_id,
             user_message=request.message,
             bot_response=response,
             response_type=response_type,
-            model_used=MODEL_ID,
+            llm_name=MODEL_ID,
             device=device,
             processing_time_ms=round(elapsed_ms, 2),
-            tokens_generated=len(response.split()),
+            tokens_generated=tokens_generated,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -550,13 +760,115 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"챗봇 처리 중 오류 발생: {exc}") from exc
 
 
+@app.get("/history/{session_id}", response_model=HistoryResponse)
+async def history(session_id: str):
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                m.id, m.role, m.content, m.response_type,
+                m.model_used AS llm_name,
+                m.processing_time_ms, m.tokens_generated, m.created_at,
+                (
+                    SELECT f.rating
+                    FROM feedback f
+                    WHERE f.message_id = m.id
+                    ORDER BY f.created_at DESC
+                    LIMIT 1
+                ) AS feedback_rating
+            FROM messages m
+            WHERE m.session_id = ?
+            ORDER BY m.created_at ASC
+            """,
+            (session_id,),
+        ).fetchall()
+
+    return HistoryResponse(
+        session_id=session_id,
+        messages=[HistoryMessage(**dict(row)) for row in rows],
+    )
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+async def feedback(request: FeedbackRequest):
+    init_db()
+    rating_value = 1 if request.rating == "up" else -1
+    feedback_id = str(uuid.uuid4())
+
+    with get_db() as conn:
+        message = conn.execute(
+            "SELECT id, role FROM messages WHERE id = ?",
+            (request.message_id,),
+        ).fetchone()
+        if not message:
+            raise HTTPException(status_code=404, detail="메시지를 찾을 수 없습니다.")
+        if message["role"] != "assistant":
+            raise HTTPException(status_code=400, detail="챗봇 응답에만 피드백을 남길 수 있습니다.")
+
+        conn.execute(
+            "INSERT INTO feedback (id, message_id, rating, comment, created_at) VALUES (?, ?, ?, ?, ?)",
+            (feedback_id, request.message_id, rating_value, request.comment, utc_now()),
+        )
+
+    return FeedbackResponse(ok=True, feedback_id=feedback_id, message="피드백이 저장되었습니다.")
+
+
+@app.get("/training-data.jsonl", response_class=PlainTextResponse)
+async def training_data():
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                assistant.id AS assistant_id,
+                user.content AS instruction,
+                assistant.content AS output,
+                feedback.rating AS rating
+            FROM feedback
+            JOIN messages assistant ON assistant.id = feedback.message_id
+            JOIN messages user
+              ON user.session_id = assistant.session_id
+             AND user.role = 'user'
+             AND user.created_at = (
+                SELECT MAX(prev.created_at)
+                FROM messages prev
+                WHERE prev.session_id = assistant.session_id
+                  AND prev.role = 'user'
+                  AND prev.created_at < assistant.created_at
+             )
+            WHERE feedback.rating = 1
+            ORDER BY feedback.created_at ASC
+            """
+        ).fetchall()
+
+    lines = []
+    for row in rows:
+        lines.append(
+            json.dumps(
+                {
+                    "instruction": row["instruction"],
+                    "output": row["output"],
+                    "metadata": {
+                        "assistant_message_id": row["assistant_id"],
+                        "rating": row["rating"],
+                        "source": "chatbot_feedback",
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
+    return PlainTextResponse("\n".join(lines), media_type="application/jsonl; charset=utf-8")
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
     return HealthResponse(
         status="healthy",
-        model_loaded=model is not None,
-        model_used=MODEL_ID,
+        loaded=model is not None,
+        llm_name=MODEL_ID,
         device=device,
+        database_path=str(DB_PATH),
         uptime_seconds=int(time.time() - started_at),
     )
 

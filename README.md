@@ -7,23 +7,26 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: mit
-short_description: FastAPI와 Hugging Face 기반 개인 한글 챗봇
+short_description: FastAPI, SQLite, Feedback 기반 실무형 한글 챗봇
 models:
-  - skt/kogpt2-base-v2
+  - Qwen/Qwen2.5-0.5B-Instruct
 ---
 
 # Personal Korean Chatbot
 
-FastAPI, Hugging Face Transformers, Docker를 사용해 만든 개인 한글 챗봇입니다.
-Hugging Face Spaces에 배포할 수 있으며, 브라우저 채팅 화면과 REST API를 함께 제공합니다.
+FastAPI, SQLite, Hugging Face Transformers, Docker를 사용해 만든 실무 연습용 한글 챗봇입니다.
+브라우저 채팅 UI와 REST API를 제공하며, 대화 히스토리와 사용자 피드백을 서버에 저장합니다.
 
 ## 주요 기능
 
 - 브라우저 기반 채팅 UI
 - `POST /chat` 챗봇 API
-- `GET /health` 상태 확인 API
-- 인사, 도움말, 배포, GitHub 관련 기본 규칙 응답
-- 그 외 메시지는 `skt/kogpt2-base-v2` 모델로 생성
+- `GET /history/{session_id}` 세션별 대화 기록 조회
+- `POST /feedback` 답변 좋아요/싫어요 저장
+- `GET /training-data.jsonl` 긍정 피드백 기반 학습 데이터 export
+- `GET /health` 상태 확인
+- SQLite 기반 대화/피드백 저장
+- `Qwen/Qwen2.5-0.5B-Instruct` 기반 instruction/chat 응답
 - Docker 기반 Hugging Face Spaces 배포
 
 ## 기술 스택
@@ -31,6 +34,7 @@ Hugging Face Spaces에 배포할 수 있으며, 브라우저 채팅 화면과 RE
 - Python
 - FastAPI
 - Pydantic
+- SQLite
 - PyTorch
 - Hugging Face Transformers
 - Docker
@@ -54,7 +58,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-브라우저에서 접속:
+브라우저:
 
 ```txt
 http://localhost:7860
@@ -65,6 +69,33 @@ API 문서:
 ```txt
 http://localhost:7860/docs
 ```
+
+## API 예시
+
+### Chat
+
+```json
+{
+  "session_id": null,
+  "user_id": "anonymous",
+  "message": "안녕하세요",
+  "max_new_tokens": 160,
+  "temperature": 0.6,
+  "top_p": 0.9
+}
+```
+
+### Feedback
+
+```json
+{
+  "message_id": "assistant-message-id",
+  "rating": "up",
+  "comment": "답변이 자연스러웠습니다."
+}
+```
+
+응답에는 사용된 모델이 `llm_name` 필드로 표시됩니다.
 
 ## Hugging Face Spaces 배포
 
@@ -79,44 +110,20 @@ http://localhost:7860/docs
 5. `Commit changes to main`을 클릭한다.
 6. 빌드가 끝나고 `Running` 상태가 되면 `App` 탭에서 테스트한다.
 
-자세한 절차는 `HUGGINGFACE_DEPLOY_MANUAL.txt`를 참고한다.
+## GitHub 포트폴리오 메모
 
-## API 예시
-
-요청:
-
-```json
-{
-  "message": "안녕하세요",
-  "max_new_tokens": 80,
-  "temperature": 0.7,
-  "top_k": 40
-}
-```
-
-응답:
-
-```json
-{
-  "user_message": "안녕하세요",
-  "bot_response": "안녕하세요! 저는 FastAPI와 Hugging Face 모델로 만든 개인 한글 챗봇입니다. 간단한 질문을 입력해보세요.",
-  "response_type": "rule",
-  "model_used": "skt/kogpt2-base-v2",
-  "device": "cpu",
-  "processing_time_ms": 1.23,
-  "tokens_generated": 12
-}
-```
+GitHub에는 코드와 README 중심으로 올립니다.
+로컬 배포 매뉴얼 txt 파일은 `.gitignore`에 등록되어 있어 GitHub에는 포함하지 않습니다.
 
 ## 한계와 개선 계획
 
-현재 기본 모델인 `skt/kogpt2-base-v2`는 지시를 정확히 따르는 챗 모델이라기보다 한국어 문장 생성 모델에 가깝습니다.
-따라서 실무형 챗봇으로 발전시키려면 아래 개선이 필요합니다.
+현재 앱은 대화 중 즉시 모델을 학습하지 않습니다.
+대신 대화와 피드백을 SQLite에 저장하고, 긍정 피드백 데이터를 `training-data.jsonl` 형태로 export할 수 있게 구성했습니다.
 
-- instruction/chat 모델로 교체
-- 서버 측 대화 히스토리 저장
-- 사용자 인증 추가
-- 질문/답변 로그 저장
-- RAG 기반 개인 문서 질의응답 추가
-- 테스트 코드와 CI 추가
+추가 개선 후보:
 
+- 인증 적용
+- 관리자용 피드백 대시보드
+- RAG 기반 개인 문서 질의응답
+- LoRA fine-tuning 파이프라인
+- 테스트 코드와 GitHub Actions CI

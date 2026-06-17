@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 .env
 .cache/
+data/
 hf_cache/
 model_cache/
 *.log
 .DS_Store
+HUGGINGFACE_DEPLOY_MANUAL.txt
+GITHUB_PORTFOLIO_MANUAL.txt
