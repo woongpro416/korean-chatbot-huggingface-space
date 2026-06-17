@@ -640,7 +640,7 @@ async def home():
           if (message.role === "user") {
             addMessage("user", "나", message.content);
           } else {
-            const meta = `${message.response_type || "assistant"} ? ${message.processing_time_ms || 0}ms`;
+            const meta = `${Math.round(message.processing_time_ms || 0)}ms`;
             addMessage("bot", "챗봇", message.content, { messageId: message.id, meta });
           }
         });
@@ -725,7 +725,7 @@ async def home():
 
         sessionId = data.session_id;
         localStorage.setItem(sessionKey, sessionId);
-        const meta = `${data.response_type} ? ${data.processing_time_ms}ms`;
+        const meta = `${Math.round(data.processing_time_ms || 0)}ms`;
         addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
       } catch (error) {
         pending.stop();
