@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -20,12 +20,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
 PORT = int(os.getenv("PORT", "7860"))
 DB_PATH = Path(os.getenv("DB_PATH", "data/chatbot.sqlite3"))
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "devwoong416")
 SYSTEM_PROMPT = (
-    "너는 포트폴리오용 개인 한글 챗봇이다. "
-    "답변은 한국어로, 짧고 명확하게 한다. "
-    "모르는 내용은 추측하지 말고 모른다고 말한다."
+    "?? ?????? ?? ?? ????. "
+    "??? ????, ?? ???? ??. "
+    "??? ??? ???? ?? ???? ???."
 )
-
 tokenizer = None
 model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -107,6 +107,25 @@ class HistoryMessage(BaseModel):
 class HistoryResponse(BaseModel):
     session_id: str
     messages: list[HistoryMessage]
+
+
+class FeedbackItem(BaseModel):
+    feedback_id: str
+    message_id: str
+    session_id: str
+    rating: Literal["up", "down"]
+    comment: Optional[str] = None
+    user_message: Optional[str] = None
+    bot_response: str
+    response_type: Optional[str] = None
+    llm_name: Optional[str] = None
+    feedback_created_at: str
+    message_created_at: str
+
+
+class AdminFeedbackResponse(BaseModel):
+    total: int
+    items: list[FeedbackItem]
 
 
 class HealthResponse(BaseModel):
@@ -246,6 +265,11 @@ def get_recent_history(session_id: str, limit: int = 8) -> list[dict[str, str]]:
         role = "assistant" if row["role"] == "assistant" else "user"
         messages.append({"role": role, "content": row["content"]})
     return messages
+
+
+def require_admin_token(x_admin_token: Optional[str]) -> None:
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="관리자 토큰이 올바르지 않습니다.")
 
 
 @asynccontextmanager
@@ -541,6 +565,29 @@ async def home():
       display: flex;
       gap: 6px;
     }
+    .message.pending .bubble {
+      color: var(--muted);
+      border-style: dashed;
+      background: rgba(255, 255, 255, 0.58);
+    }
+    .thinking {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--violet);
+      box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.32);
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.32); }
+      70% { box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+    }
     .feedback button {
       min-width: 42px;
       min-height: 30px;
@@ -709,7 +756,7 @@ async def home():
 
     function addMessage(type, label, text, options = {}) {
       const wrapper = document.createElement("div");
-      wrapper.className = `message ${type}`;
+      wrapper.className = `message ${type}${options.pending ? " pending" : ""}`;
       if (options.messageId) wrapper.dataset.messageId = options.messageId;
 
       const labelEl = document.createElement("div");
@@ -745,6 +792,26 @@ async def home():
 
       chat.appendChild(wrapper);
       chat.scrollTop = chat.scrollHeight;
+      return wrapper;
+    }
+
+    function addPendingMessage() {
+      const pending = addMessage("bot", "챗봇", "탐색중... 0초", { pending: true });
+      const bubble = pending.querySelector(".bubble");
+      bubble.innerHTML = `<span class="thinking"><span class="pulse"></span><span>탐색중... 0초</span></span>`;
+      const text = bubble.querySelector(".thinking span:last-child");
+      const startedAt = Date.now();
+      const timer = setInterval(() => {
+        const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        text.textContent = `탐색중... ${seconds}초`;
+      }, 1000);
+      return {
+        element: pending,
+        stop() {
+          clearInterval(timer);
+          pending.remove();
+        }
+      };
     }
 
     async function loadHistory() {
@@ -800,6 +867,7 @@ async def home():
       addMessage("user", "나", message);
       input.value = "";
       send.disabled = true;
+      const pending = addPendingMessage();
 
       try {
         const response = await fetch("/chat", {
@@ -816,6 +884,7 @@ async def home():
         });
 
         const data = await response.json();
+        pending.stop();
         if (!response.ok) {
           addMessage("bot", "챗봇", data.detail || "요청 처리 중 오류가 발생했습니다.");
           return;
@@ -826,6 +895,7 @@ async def home():
         const meta = `${data.response_type} · ${data.processing_time_ms}ms`;
         addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
       } catch (error) {
+        pending.stop();
         addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
       } finally {
         send.disabled = false;
@@ -857,6 +927,227 @@ async def home():
     loadHistory();
     checkHealth();
     setInterval(checkHealth, 15000);
+  </script>
+</body>
+</html>
+"""
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    return """
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chatbot Feedback Admin</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+      color: #29213b;
+      background:
+        linear-gradient(135deg, rgba(139, 92, 246, 0.22), transparent 36%),
+        linear-gradient(315deg, rgba(19, 191, 164, 0.12), transparent 34%),
+        linear-gradient(180deg, #fbf8ff 0%, #f4efff 52%, #effaf7 100%);
+    }
+    main {
+      width: min(1120px, calc(100vw - 28px));
+      margin: 0 auto;
+      padding: 28px 0;
+    }
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
+    p { margin: 7px 0 0; color: #756b88; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 160px 120px;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border: 1px solid rgba(116, 79, 173, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 20px 50px rgba(87, 58, 139, 0.13);
+    }
+    input, select, button {
+      min-height: 42px;
+      border: 1px solid rgba(116, 79, 173, 0.2);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.86);
+      color: #29213b;
+      font-size: 15px;
+    }
+    input { padding: 0 12px; }
+    select { padding: 0 10px; }
+    button {
+      cursor: pointer;
+      background: linear-gradient(135deg, #6d28d9, #4f46e5);
+      color: white;
+      border-color: rgba(109, 40, 217, 0.7);
+    }
+    .summary {
+      margin: 0 0 12px;
+      color: #756b88;
+      font-size: 14px;
+    }
+    .list {
+      display: grid;
+      gap: 12px;
+    }
+    .card {
+      padding: 14px;
+      border: 1px solid rgba(116, 79, 173, 0.14);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: 0 12px 32px rgba(87, 58, 139, 0.1);
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+      color: #756b88;
+      font-size: 13px;
+    }
+    .pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(139, 92, 246, 0.1);
+      color: #5b21b6;
+    }
+    .pill.down {
+      background: rgba(217, 75, 106, 0.1);
+      color: #b42349;
+    }
+    .qa {
+      display: grid;
+      gap: 9px;
+    }
+    .label {
+      display: block;
+      margin-bottom: 4px;
+      color: #756b88;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .box {
+      padding: 10px 11px;
+      border: 1px solid rgba(116, 79, 173, 0.12);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.68);
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .empty {
+      padding: 22px;
+      text-align: center;
+      color: #756b88;
+      border: 1px dashed rgba(116, 79, 173, 0.26);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+    @media (max-width: 720px) {
+      header { align-items: stretch; flex-direction: column; }
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Feedback Admin</h1>
+        <p>챗봇 응답에 남겨진 좋아요/싫어요 피드백을 검토합니다.</p>
+      </div>
+    </header>
+
+    <section class="controls">
+      <input id="token" type="password" placeholder="관리자 토큰" autocomplete="off" />
+      <select id="rating">
+        <option value="">전체</option>
+        <option value="up">좋아요</option>
+        <option value="down">싫어요</option>
+      </select>
+      <button id="load" type="button">불러오기</button>
+    </section>
+
+    <p id="summary" class="summary">관리자 토큰을 입력하고 피드백을 불러오세요.</p>
+    <section id="list" class="list"></section>
+  </main>
+
+  <script>
+    const token = document.getElementById("token");
+    const rating = document.getElementById("rating");
+    const load = document.getElementById("load");
+    const summary = document.getElementById("summary");
+    const list = document.getElementById("list");
+    const tokenKey = "chatbot-admin-token";
+
+    token.value = localStorage.getItem(tokenKey) || "";
+
+    function renderItem(item) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const ratingText = item.rating === "up" ? "좋아요" : "싫어요";
+      card.innerHTML = `
+        <div class="meta">
+          <span class="pill ${item.rating === "down" ? "down" : ""}">${ratingText}</span>
+          <span>${item.feedback_created_at}</span>
+          <span>${item.response_type || "assistant"}</span>
+          <span>${item.llm_name || ""}</span>
+        </div>
+        <div class="qa">
+          <div><span class="label">사용자 질문</span><div class="box"></div></div>
+          <div><span class="label">챗봇 답변</span><div class="box"></div></div>
+          <div><span class="label">코멘트</span><div class="box"></div></div>
+        </div>
+      `;
+      const boxes = card.querySelectorAll(".box");
+      boxes[0].textContent = item.user_message || "(질문을 찾지 못했습니다)";
+      boxes[1].textContent = item.bot_response;
+      boxes[2].textContent = item.comment || "(코멘트 없음)";
+      return card;
+    }
+
+    async function loadFeedback() {
+      localStorage.setItem(tokenKey, token.value);
+      list.innerHTML = "";
+      summary.textContent = "불러오는 중...";
+
+      const params = new URLSearchParams({ limit: "100" });
+      if (rating.value) params.set("rating", rating.value);
+
+      try {
+        const response = await fetch(`/admin/feedback?${params.toString()}`, {
+          headers: { "X-Admin-Token": token.value }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          summary.textContent = data.detail || "피드백을 불러오지 못했습니다.";
+          return;
+        }
+        summary.textContent = `총 ${data.total}개의 피드백`;
+        if (!data.items.length) {
+          list.innerHTML = `<div class="empty">아직 표시할 피드백이 없습니다.</div>`;
+          return;
+        }
+        data.items.forEach((item) => list.appendChild(renderItem(item)));
+      } catch (error) {
+        summary.textContent = "서버와 통신하지 못했습니다.";
+      }
+    }
+
+    load.addEventListener("click", loadFeedback);
   </script>
 </body>
 </html>
@@ -958,6 +1249,67 @@ async def feedback(request: FeedbackRequest):
         )
 
     return FeedbackResponse(ok=True, feedback_id=feedback_id, message="피드백이 저장되었습니다.")
+
+
+@app.get("/admin/feedback", response_model=AdminFeedbackResponse)
+async def admin_feedback(
+    rating: Optional[Literal["up", "down"]] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    x_admin_token: Optional[str] = Header(None),
+):
+    require_admin_token(x_admin_token)
+    init_db()
+
+    params: list[object] = []
+    rating_filter = ""
+    if rating:
+        rating_filter = "WHERE f.rating = ?"
+        params.append(1 if rating == "up" else -1)
+
+    with get_db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) AS count FROM feedback f {rating_filter}",
+            params,
+        ).fetchone()["count"]
+
+        rows = conn.execute(
+            f"""
+            SELECT
+                f.id AS feedback_id,
+                f.message_id,
+                f.rating,
+                f.comment,
+                f.created_at AS feedback_created_at,
+                assistant.session_id,
+                assistant.content AS bot_response,
+                assistant.response_type,
+                assistant.model_used AS llm_name,
+                assistant.created_at AS message_created_at,
+                (
+                    SELECT user.content
+                    FROM messages user
+                    WHERE user.session_id = assistant.session_id
+                      AND user.role = 'user'
+                      AND user.created_at < assistant.created_at
+                    ORDER BY user.created_at DESC
+                    LIMIT 1
+                ) AS user_message
+            FROM feedback f
+            JOIN messages assistant ON assistant.id = f.message_id
+            {rating_filter}
+            ORDER BY f.created_at DESC
+            LIMIT ?
+            """,
+            [*params, limit],
+        ).fetchall()
+
+    items = []
+    for row in rows:
+        data = dict(row)
+        data["rating"] = "up" if data["rating"] == 1 else "down"
+        items.append(FeedbackItem(**data))
+
+    return AdminFeedbackResponse(total=total, items=items)
 
 
 @app.get("/training-data.jsonl", response_class=PlainTextResponse)
