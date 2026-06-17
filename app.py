@@ -398,41 +398,92 @@ async def home():
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Personal Korean Chatbot</title>
   <style>
-    * { box-sizing: border-box; }
+    :root {
+      --bg: #f6f2ff;
+      --panel: rgba(255, 255, 255, 0.76);
+      --panel-strong: rgba(255, 255, 255, 0.92);
+      --line: rgba(116, 79, 173, 0.16);
+      --text: #272038;
+      --muted: #756b88;
+      --soft: #3a304d;
+      --violet: #8b5cf6;
+      --violet-strong: #6d28d9;
+      --mint: #13bfa4;
+      --amber: #d88a2d;
+      --danger: #d94b6a;
+      --shadow: 0 24px 60px rgba(87, 58, 139, 0.16);
+    }
+    * {
+      box-sizing: border-box;
+    }
     body {
       margin: 0;
-      font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
-      background: #f4f6f8;
-      color: #1f2933;
+      min-height: 100vh;
+      font-family: Inter, Arial, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+      color: var(--text);
+      background:
+        linear-gradient(135deg, rgba(139, 92, 246, 0.28), transparent 36%),
+        linear-gradient(315deg, rgba(19, 191, 164, 0.16), transparent 33%),
+        linear-gradient(180deg, #fbf8ff 0%, #f2ecff 48%, #eefaf8 100%);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        repeating-linear-gradient(90deg, rgba(99, 74, 142, 0.055) 0 1px, transparent 1px 84px),
+        repeating-linear-gradient(0deg, rgba(99, 74, 142, 0.04) 0 1px, transparent 1px 84px);
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 88%);
     }
     .shell {
       width: min(1000px, calc(100vw - 28px));
       margin: 0 auto;
-      padding: 24px 0;
+      padding: 26px 0;
     }
     header {
       display: flex;
-      align-items: flex-end;
+      align-items: center;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
-    h1 { margin: 0; font-size: 26px; line-height: 1.25; }
-    .subtitle { margin: 6px 0 0; color: #52606d; font-size: 14px; }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.2;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
     .status {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       min-width: max-content;
-      padding: 8px 10px;
-      border: 1px solid #cbd5e1;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
       border-radius: 6px;
-      background: #ffffff;
-      color: #334155;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--soft);
       font-size: 13px;
+      box-shadow: 0 10px 30px rgba(87, 58, 139, 0.1);
     }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: #94a3b8; }
-    .dot.ready { background: #16a34a; }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #757083;
+    }
+    .dot.ready {
+      background: var(--mint);
+      box-shadow: 0 0 0 4px rgba(69, 214, 181, 0.14);
+    }
     .layout {
       display: grid;
       grid-template-columns: 1fr 260px;
@@ -442,76 +493,171 @@ async def home():
       display: grid;
       grid-template-rows: minmax(430px, 62vh) auto;
       overflow: hidden;
-      border: 1px solid #d7dee8;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #ffffff;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
     }
-    #chat { overflow-y: auto; padding: 18px; }
-    .message { display: grid; gap: 6px; max-width: 82%; margin: 0 0 14px; }
-    .message.user { margin-left: auto; justify-items: end; }
-    .label { color: #64748b; font-size: 12px; }
+    #chat {
+      overflow-y: auto;
+      padding: 18px;
+      scrollbar-color: rgba(139, 92, 246, 0.42) rgba(116, 79, 173, 0.08);
+    }
+    .message {
+      display: grid;
+      gap: 6px;
+      max-width: 82%;
+      margin: 0 0 15px;
+    }
+    .message.user {
+      margin-left: auto;
+      justify-items: end;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+    }
     .bubble {
       padding: 12px 13px;
       border-radius: 8px;
       line-height: 1.55;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      background: #eef2f7;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(116, 79, 173, 0.13);
+      color: var(--soft);
     }
-    .message.user .bubble { background: #2563eb; color: #ffffff; }
-    .meta { color: #64748b; font-size: 12px; }
-    .feedback { display: flex; gap: 6px; }
+    .message.user .bubble {
+      background: linear-gradient(135deg, rgba(124, 58, 237, 0.95), rgba(72, 93, 220, 0.95));
+      border-color: rgba(255, 255, 255, 0.16);
+      color: #ffffff;
+    }
+    .meta {
+      color: #837592;
+      font-size: 12px;
+    }
+    .feedback {
+      display: flex;
+      gap: 6px;
+    }
     .feedback button {
       min-width: 42px;
       min-height: 30px;
       padding: 4px 8px;
       font-size: 13px;
+      color: var(--soft);
     }
     .composer {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr 44px 52px;
       gap: 8px;
       padding: 12px;
-      border-top: 1px solid #e2e8f0;
-      background: #f8fafc;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.62);
     }
     input {
       width: 100%;
       min-width: 0;
       padding: 12px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid rgba(116, 79, 173, 0.2);
       border-radius: 6px;
+      outline: none;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--text);
       font-size: 16px;
     }
+    input::placeholder {
+      color: #9388a3;
+    }
+    input:focus {
+      border-color: rgba(159, 122, 234, 0.9);
+      box-shadow: 0 0 0 3px rgba(159, 122, 234, 0.16);
+    }
     button {
-      min-width: 82px;
+      min-width: 0;
       padding: 0 14px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid rgba(116, 79, 173, 0.18);
       border-radius: 6px;
-      background: #ffffff;
-      color: #1f2933;
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--text);
       font-size: 15px;
       cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
     }
-    button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
-    button:disabled { border-color: #94a3b8; background: #94a3b8; color: #ffffff; cursor: wait; }
+    button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(159, 122, 234, 0.72);
+      background: rgba(255, 255, 255, 0.94);
+    }
+    button.primary {
+      border-color: rgba(159, 122, 234, 0.95);
+      background: linear-gradient(135deg, var(--violet-strong), #4f46e5);
+      color: #ffffff;
+    }
+    button:disabled {
+      transform: none;
+      border-color: rgba(148, 163, 184, 0.35);
+      background: rgba(148, 163, 184, 0.28);
+      color: rgba(255, 255, 255, 0.78);
+      cursor: wait;
+    }
     aside {
-      border: 1px solid #d7dee8;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.68);
       padding: 14px;
       align-self: start;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
     }
-    aside h2 { margin: 0 0 10px; font-size: 16px; }
-    .side-text { margin: 0 0 12px; color: #52606d; font-size: 13px; line-height: 1.5; }
-    .chips { display: grid; gap: 8px; }
-    .chip { min-width: 0; min-height: 36px; padding: 8px 10px; font-size: 13px; text-align: left; }
+    aside h2 {
+      margin: 0 0 10px;
+      color: #2d2540;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .side-text {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .chips {
+      display: grid;
+      gap: 8px;
+    }
+    .chip {
+      min-width: 0;
+      min-height: 38px;
+      padding: 8px 10px;
+      color: var(--soft);
+      font-size: 13px;
+      text-align: left;
+    }
+    .chip:nth-child(2) {
+      border-color: rgba(69, 214, 181, 0.34);
+    }
+    .chip:nth-child(4) {
+      border-color: rgba(240, 184, 110, 0.32);
+    }
     @media (max-width: 760px) {
-      header { align-items: stretch; flex-direction: column; }
-      .layout { grid-template-columns: 1fr; }
-      .message { max-width: 94%; }
-      .composer { grid-template-columns: 1fr; }
-      button { min-height: 42px; }
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .message {
+        max-width: 94%;
+      }
+      .composer {
+        grid-template-columns: 1fr 44px 52px;
+      }
+      button {
+        min-height: 42px;
+      }
     }
   </style>
 </head>
@@ -520,7 +666,7 @@ async def home():
     <header>
       <div>
         <h1>Personal Korean Chatbot</h1>
-        <p class="subtitle">대화 저장 · 피드백 수집 · Instruct 모델 기반 배포 연습</p>
+        <p class="subtitle">Violet workspace for focused Korean chat</p>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="statusText">상태 확인 중</span></div>
     </header>
@@ -530,14 +676,14 @@ async def home():
         <div id="chat"></div>
         <form id="form" class="composer">
           <input id="message" placeholder="메시지를 입력하세요" autocomplete="off" />
-          <button id="clear" type="button">초기화</button>
-          <button id="send" class="primary" type="submit">전송</button>
+          <button id="clear" type="button" title="새 세션">↺</button>
+          <button id="send" class="primary" type="submit" title="전송">↑</button>
         </form>
       </section>
 
       <aside>
-        <h2>테스트 문장</h2>
-        <p class="side-text">응답 아래 좋아요/싫어요를 누르면 서버에 피드백이 저장됩니다.</p>
+        <h2>Prompt Palette</h2>
+        <p class="side-text">오늘의 대화를 가볍게 시작해보세요.</p>
         <div class="chips">
           <button class="chip" type="button">안녕하세요</button>
           <button class="chip" type="button">도움말</button>
