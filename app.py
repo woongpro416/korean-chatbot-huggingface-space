@@ -22,9 +22,9 @@ PORT = int(os.getenv("PORT", "7860"))
 DB_PATH = Path(os.getenv("DB_PATH", "data/chatbot.sqlite3"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "devwoong416")
 SYSTEM_PROMPT = (
-    "?? ?????? ?? ?? ????. "
-    "??? ????, ?? ???? ??. "
-    "??? ??? ???? ?? ???? ???."
+    "너는 포트폴리오용 개인 한글 챗봇이다. "
+    "답변은 한국어로, 짧고 명확하게 한다. "
+    "모르는 내용은 추측하지 말고 모른다고 말한다."
 )
 tokenizer = None
 model = None
@@ -534,28 +534,28 @@ async def home():
         <h1>Personal Korean Chatbot</h1>
         <p class="subtitle">Violet workspace for focused Korean chat</p>
       </div>
-      <div class="status"><span id="dot" class="dot"></span><span id="statusText">?? ?? ?</span></div>
+      <div class="status"><span id="dot" class="dot"></span><span id="statusText">상태 확인 중</span></div>
     </header>
 
     <div class="layout">
       <section class="chat-panel">
         <div id="chat"></div>
         <form id="form" class="composer">
-          <input id="message" placeholder="???? ?????" autocomplete="off" />
-          <button id="clear" type="button" title="? ??">?</button>
-          <button id="send" class="primary" type="submit" title="??">?</button>
+          <input id="message" placeholder="메시지를 입력하세요" autocomplete="off" />
+          <button id="clear" type="button" title="새 세션">↺</button>
+          <button id="send" class="primary" type="submit" title="전송">↑</button>
         </form>
       </section>
 
       <aside>
         <h2>Prompt Palette</h2>
-        <p class="side-text">??? ??? ??? ??????.</p>
+        <p class="side-text">오늘의 대화를 가볍게 시작해보세요.</p>
         <div class="chips">
-          <button class="chip" type="button">?????</button>
-          <button class="chip" type="button">???</button>
-          <button class="chip" type="button">?? ????</button>
-          <button class="chip" type="button">?? ??? ???</button>
-          <button class="chip" type="button">????? ?? ????</button>
+          <button class="chip" type="button">안녕하세요</button>
+          <button class="chip" type="button">도움말</button>
+          <button class="chip" type="button">너는 누구야?</button>
+          <button class="chip" type="button">학습 기능이 있어?</button>
+          <button class="chip" type="button">인공지능을 쉽게 설명해줘</button>
         </div>
       </aside>
     </div>
@@ -600,8 +600,8 @@ async def home():
         const feedback = document.createElement("div");
         feedback.className = "feedback";
         feedback.innerHTML = `
-          <button type="button" data-rating="up">???</button>
-          <button type="button" data-rating="down">???</button>
+          <button type="button" data-rating="up">좋아요</button>
+          <button type="button" data-rating="down">싫어요</button>
         `;
         feedback.querySelectorAll("button").forEach((button) => {
           button.addEventListener("click", () => openFeedbackForm(options.messageId, button.dataset.rating, feedback));
@@ -615,14 +615,14 @@ async def home():
     }
 
     function addPendingMessage() {
-      const pending = addMessage("bot", "??", "???... 0?", { pending: true });
+      const pending = addMessage("bot", "챗봇", "탐색중... 0초", { pending: true });
       const bubble = pending.querySelector(".bubble");
-      bubble.innerHTML = `<span class="thinking"><span class="pulse"></span><span>???... 0?</span></span>`;
+      bubble.innerHTML = `<span class="thinking"><span class="pulse"></span><span>탐색중... 0초</span></span>`;
       const text = bubble.querySelector(".thinking span:last-child");
       const startedAt = Date.now();
       const timer = setInterval(() => {
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
-        text.textContent = `???... ${seconds}?`;
+        text.textContent = `탐색중... ${seconds}초`;
       }, 1000);
       return { element: pending, stop() { clearInterval(timer); pending.remove(); } };
     }
@@ -633,19 +633,19 @@ async def home():
         const data = await response.json();
         chat.innerHTML = "";
         if (!data.messages.length) {
-          addMessage("bot", "??", "?????! ?? ?? ??? ???? ??? ?????.");
+          addMessage("bot", "챗봇", "안녕하세요! 이제 대화 기록과 피드백이 서버에 저장됩니다.");
           return;
         }
         data.messages.forEach((message) => {
           if (message.role === "user") {
-            addMessage("user", "?", message.content);
+            addMessage("user", "나", message.content);
           } else {
             const meta = `${message.response_type || "assistant"} ? ${message.processing_time_ms || 0}ms`;
-            addMessage("bot", "??", message.content, { messageId: message.id, meta });
+            addMessage("bot", "챗봇", message.content, { messageId: message.id, meta });
           }
         });
       } catch (error) {
-        addMessage("bot", "??", "?? ??? ???? ?????. ? ??? ?????.");
+        addMessage("bot", "챗봇", "대화 기록을 불러오지 못했습니다. 새 대화로 시작합니다.");
       }
     }
 
@@ -654,19 +654,19 @@ async def home():
         const response = await fetch("/health");
         const data = await response.json();
         dot.classList.toggle("ready", data.loaded);
-        statusText.textContent = data.loaded ? `Running ? ${data.llm_name}` : "?? ?? ?";
+        statusText.textContent = data.loaded ? `Running · ${data.llm_name}` : "모델 로딩 중";
       } catch (error) {
         dot.classList.remove("ready");
-        statusText.textContent = "?? ?? ??";
+        statusText.textContent = "연결 확인 필요";
       }
     }
 
     function openFeedbackForm(messageId, rating, container) {
-      const ratingText = rating === "up" ? "???" : "???";
+      const ratingText = rating === "up" ? "좋아요" : "싫어요";
       container.innerHTML = `
         <div class="feedback-form">
-          <input type="text" maxlength="500" placeholder="${ratingText} ??? ?? ????? (??)" />
-          <button type="button">??</button>
+          <input type="text" maxlength="500" placeholder="${ratingText} 이유를 짧게 적어주세요 (선택)" />
+          <button type="button">저장</button>
         </div>
       `;
       const inputEl = container.querySelector("input");
@@ -690,14 +690,14 @@ async def home():
           body: JSON.stringify({ message_id: messageId, rating, comment: comment || null })
         });
         if (!response.ok) throw new Error("feedback failed");
-        container.textContent = rating === "up" ? "???? ???? ???????." : "???? ???? ???????.";
+        container.textContent = rating === "up" ? "좋아요와 코멘트가 저장되었습니다." : "싫어요와 코멘트가 저장되었습니다.";
       } catch (error) {
-        container.textContent = "??? ??? ??????.";
+        container.textContent = "피드백 저장에 실패했습니다.";
       }
     }
 
     async function sendMessage(message) {
-      addMessage("user", "?", message);
+      addMessage("user", "나", message);
       input.value = "";
       send.disabled = true;
       const pending = addPendingMessage();
@@ -719,17 +719,17 @@ async def home():
         const data = await response.json();
         pending.stop();
         if (!response.ok) {
-          addMessage("bot", "??", data.detail || "?? ?? ? ??? ??????.");
+          addMessage("bot", "챗봇", data.detail || "요청 처리 중 오류가 발생했습니다.");
           return;
         }
 
         sessionId = data.session_id;
         localStorage.setItem(sessionKey, sessionId);
         const meta = `${data.response_type} ? ${data.processing_time_ms}ms`;
-        addMessage("bot", "??", data.bot_response, { messageId: data.message_id, meta });
+        addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
       } catch (error) {
         pending.stop();
-        addMessage("bot", "??", "??? ???? ?????. ?? ? ?? ??????.");
+        addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
       } finally {
         send.disabled = false;
         input.focus();
@@ -746,7 +746,7 @@ async def home():
       sessionId = crypto.randomUUID();
       localStorage.setItem(sessionKey, sessionId);
       chat.innerHTML = "";
-      addMessage("bot", "??", "? ??? ??????.");
+      addMessage("bot", "챗봇", "새 세션을 시작했습니다.");
       input.focus();
     });
 
