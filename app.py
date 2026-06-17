@@ -13,9 +13,10 @@ from threading import Thread
 import torch
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+
 
 
 MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
@@ -377,6 +378,9 @@ async def stream_model_response(messages, max_new_tokens, temperature, top_p):
         if new_text:
             yield new_text
 
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse("static/favicon.ico")
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -662,6 +666,32 @@ async def home():
       }
     }
 
+      function addRetryMessage(originalMessage, reason = "서버와 통신하지 못했습니다.") {
+      const wrapper = addMessage(
+        "bot",
+        "챗봇",
+        `${reason} 아래 버튼으로 같은 질문을 다시 보낼 수 있습니다.`,
+        { pending: false }
+      );
+
+      const retryArea = document.createElement("div");
+      retryArea.className = "feedback";
+
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.textContent = "다시 시도";
+
+      retryButton.addEventListener("click", () => {
+        wrapper.remove();
+        sendMessage(originalMessage);
+      });
+
+      retryArea.appendChild(retryButton);
+      wrapper.appendChild(retryArea);
+
+      chat.scrollTop = chat.scrollHeight;
+    }
+
     async function sendMessage(message) {
       addMessage("user", "나", message);
       input.value = "";
@@ -676,7 +706,6 @@ async def home():
             session_id: sessionId,
             user_id: "browser-user",
             message,
-            # JavaScript 요청 단에서도 최대 신규 생성 토큰을 512로 설정해 줍니다.
             max_new_tokens: 512,
             temperature: 0.6,
             top_p: 0.9
@@ -691,7 +720,7 @@ async def home():
         }
 
         pending.stop();
-        const botMessageWrapper = addMessage("bot", "챗봇", "", { meta: "Streaming..." });
+        const botMessageWrapper = addMessage("bot", "챗봇", "", { meta: "답변 생성 중..." });
         const bubble = botMessageWrapper.querySelector(".bubble");
 
         const reader = response.body.getReader();
@@ -715,7 +744,7 @@ async def home():
 
       } catch (error) {
         pending.stop();
-        addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
+        addRetryMessage(message);
       } finally {
         send.disabled = false;
         input.focus();
