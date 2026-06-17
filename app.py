@@ -8,13 +8,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
+from threading import Thread
 
 import torch
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 
 MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
@@ -23,7 +24,7 @@ DB_PATH = Path(os.getenv("DB_PATH", "data/chatbot.sqlite3"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "devwoong416")
 SYSTEM_PROMPT = (
     "너는 포트폴리오용 개인 한글 챗봇이다. "
-    "답변은 한국어로, 짧고 명확하게 한다. "
+    "답변은 한국어로 명확하게 하되, 필요한 설명은 생략하지 않고 충분히 작성한다. "
     "모르는 내용은 추측하지 말고 모른다고 말한다."
 )
 tokenizer = None
@@ -48,7 +49,8 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="대화 세션 ID. 없으면 새로 생성")
     user_id: str = Field("anonymous", max_length=80, description="사용자 식별자")
     message: str = Field(..., min_length=1, max_length=800, description="사용자 메시지")
-    max_new_tokens: int = Field(160, ge=20, le=300, description="새로 생성할 최대 토큰 수")
+    # 최대 토큰 허용치를 300 -> 1024로 늘리고 기본값을 512로 확장했습니다.
+    max_new_tokens: int = Field(512, ge=20, le=1024, description="새로 생성할 최대 토큰 수")
     temperature: float = Field(0.6, ge=0.1, le=1.2, description="응답 다양성")
     top_p: float = Field(0.9, ge=0.1, le=1.0, description="누적 확률 샘플링 값")
 
@@ -58,26 +60,12 @@ class ChatRequest(BaseModel):
                 "session_id": None,
                 "user_id": "anonymous",
                 "message": "안녕하세요",
-                "max_new_tokens": 160,
+                "max_new_tokens": 512,
                 "temperature": 0.6,
                 "top_p": 0.9,
             }
         }
     }
-
-
-class ChatResponse(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
-
-    session_id: str
-    message_id: str
-    user_message: str
-    bot_response: str
-    response_type: Literal["rule", "model"]
-    llm_name: str
-    device: str
-    processing_time_ms: float
-    tokens_generated: Optional[int] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -148,6 +136,10 @@ def get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+def require_admin_token(token: Optional[str]) -> None:
+    if not token or token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="올바른 관리자 토큰이 필요합니다.")
+
 
 def init_db() -> None:
     with get_db() as conn:
@@ -192,7 +184,6 @@ def init_db() -> None:
 
 
 def ensure_session(session_id: Optional[str], user_id: str) -> str:
-    init_db()
     sid = session_id or str(uuid.uuid4())
     now = utc_now()
     with get_db() as conn:
@@ -219,7 +210,6 @@ def save_message(
     processing_time_ms: Optional[float] = None,
     tokens_generated: Optional[int] = None,
 ) -> str:
-    init_db()
     message_id = str(uuid.uuid4())
     with get_db() as conn:
         conn.execute(
@@ -247,7 +237,6 @@ def save_message(
 
 
 def get_recent_history(session_id: str, limit: int = 8) -> list[dict[str, str]]:
-    init_db()
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -265,11 +254,6 @@ def get_recent_history(session_id: str, limit: int = 8) -> list[dict[str, str]]:
         role = "assistant" if row["role"] == "assistant" else "user"
         messages.append({"role": role, "content": row["content"]})
     return messages
-
-
-def require_admin_token(x_admin_token: Optional[str]) -> None:
-    if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="관리자 토큰이 올바르지 않습니다.")
 
 
 @asynccontextmanager
@@ -352,64 +336,46 @@ def build_chat_messages(session_id: str, user_input: str) -> list[dict[str, str]
     return messages
 
 
+# 답변 출력 길이 제한을 제거하기 위해 자르는 크기를 1000에서 5000으로 대폭 변경했습니다.
 def clean_generated_text(text: str) -> str:
     cleaned = text.strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return cleaned[:1000].strip()
+    return cleaned[:5000].strip()
 
 
-def generate_model_response(
-    session_id: str,
-    user_input: str,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-) -> str:
+async def stream_model_response(messages, max_new_tokens, temperature, top_p):
     if model is None or tokenizer is None:
-        raise RuntimeError("모델이 아직 로드되지 않았습니다.")
-
-    messages = build_chat_messages(session_id, user_input)
+        yield "모델이 아직 로드되지 않았습니다."
+        return
 
     if getattr(tokenizer, "chat_template", None):
         inputs = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
+            messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt"
         ).to(device)
     else:
         prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages) + "\nassistant:"
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            repetition_penalty=1.15,
-            pad_token_id=tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-        )
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    
+    generation_kwargs = dict(
+        **inputs,
+        streamer=streamer,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=1.15,
+        pad_token_id=tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+    )
 
-    generated_ids = output_ids[0][inputs["input_ids"].shape[-1] :]
-    response = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    return clean_generated_text(response) or "죄송합니다. 답변을 생성하지 못했습니다. 질문을 조금 다르게 입력해주세요."
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+    thread.start()
 
-
-def generate_response(
-    session_id: str,
-    user_input: str,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-) -> tuple[str, Literal["rule", "model"]]:
-    rule_response = get_rule_based_response(user_input)
-    if rule_response:
-        return rule_response, "rule"
-    return generate_model_response(session_id, user_input, max_new_tokens, temperature, top_p), "model"
+    for new_text in streamer:
+        if new_text:
+            yield new_text
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -710,23 +676,43 @@ async def home():
             session_id: sessionId,
             user_id: "browser-user",
             message,
-            max_new_tokens: 160,
+            # JavaScript 요청 단에서도 최대 신규 생성 토큰을 512로 설정해 줍니다.
+            max_new_tokens: 512,
             temperature: 0.6,
             top_p: 0.9
           })
         });
 
-        const data = await response.json();
-        pending.stop();
         if (!response.ok) {
+          const data = await response.json();
+          pending.stop();
           addMessage("bot", "챗봇", data.detail || "요청 처리 중 오류가 발생했습니다.");
           return;
         }
 
-        sessionId = data.session_id;
-        localStorage.setItem(sessionKey, sessionId);
-        const meta = `${Math.round(data.processing_time_ms || 0)}ms`;
-        addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
+        pending.stop();
+        const botMessageWrapper = addMessage("bot", "챗봇", "", { meta: "Streaming..." });
+        const bubble = botMessageWrapper.querySelector(".bubble");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let done = false;
+        let fullText = "";
+
+        while (!done) {
+          const { value, done: readerDone } = await reader.read();
+          done = readerDone;
+          if (value) {
+            const chunk = decoder.decode(value, { stream: !done });
+            fullText += chunk;
+            bubble.textContent = fullText;
+            chat.scrollTop = chat.scrollHeight;
+          }
+        }
+
+        const metaEl = botMessageWrapper.querySelector(".meta");
+        if (metaEl) metaEl.textContent = "완료";
+
       } catch (error) {
         pending.stop();
         addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
@@ -987,52 +973,46 @@ async def admin_page():
 """
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(request: ChatRequest):
-    start = time.time()
     session_id = ensure_session(request.session_id, request.user_id)
     save_message(session_id, "user", request.message)
 
-    try:
-        response, response_type = generate_response(
-            session_id=session_id,
-            user_input=request.message,
-            max_new_tokens=request.max_new_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-        )
-        elapsed_ms = (time.time() - start) * 1000
-        tokens_generated = len(response.split())
-        assistant_message_id = save_message(
+    rule_response = get_rule_based_response(request.message)
+    if rule_response:
+        async def stream_rule():
+            yield rule_response
+            save_message(session_id, "assistant", rule_response, "rule", MODEL_ID, 0, len(rule_response.split()))
+        
+        return StreamingResponse(stream_rule(), media_type="text/event-stream")
+
+    async def wrapped_stream():
+        full_response = ""
+        start_time = time.time()
+        messages = build_chat_messages(session_id, request.message)
+        
+        async for chunk in stream_model_response(
+            messages, request.max_new_tokens, request.temperature, request.top_p
+        ):
+            full_response += chunk
+            yield chunk
+        
+        elapsed_ms = (time.time() - start_time) * 1000
+        save_message(
             session_id=session_id,
             role="assistant",
-            content=response,
-            response_type=response_type,
+            content=full_response,
+            response_type="model",
             model_used=MODEL_ID,
             processing_time_ms=round(elapsed_ms, 2),
-            tokens_generated=tokens_generated,
+            tokens_generated=len(full_response.split()),
         )
 
-        return ChatResponse(
-            session_id=session_id,
-            message_id=assistant_message_id,
-            user_message=request.message,
-            bot_response=response,
-            response_type=response_type,
-            llm_name=MODEL_ID,
-            device=device,
-            processing_time_ms=round(elapsed_ms, 2),
-            tokens_generated=tokens_generated,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"챗봇 처리 중 오류 발생: {exc}") from exc
+    return StreamingResponse(wrapped_stream(), media_type="text/event-stream")
 
 
 @app.get("/history/{session_id}", response_model=HistoryResponse)
 async def history(session_id: str):
-    init_db()
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -1062,7 +1042,6 @@ async def history(session_id: str):
 
 @app.post("/feedback", response_model=FeedbackResponse)
 async def feedback(request: FeedbackRequest):
-    init_db()
     rating_value = 1 if request.rating == "up" else -1
     feedback_id = str(uuid.uuid4())
 
@@ -1091,7 +1070,6 @@ async def admin_feedback(
     x_admin_token: Optional[str] = Header(None),
 ):
     require_admin_token(x_admin_token)
-    init_db()
 
     params: list[object] = []
     rating_filter = ""
@@ -1147,7 +1125,6 @@ async def admin_feedback(
 
 @app.get("/training-data.jsonl", response_class=PlainTextResponse)
 async def training_data():
-    init_db()
     with get_db() as conn:
         rows = conn.execute(
             """
