@@ -423,9 +423,7 @@ async def home():
   <title>Personal Korean Chatbot</title>
   <style>
     :root {
-      --bg: #f6f2ff;
       --panel: rgba(255, 255, 255, 0.76);
-      --panel-strong: rgba(255, 255, 255, 0.92);
       --line: rgba(116, 79, 173, 0.16);
       --text: #272038;
       --muted: #756b88;
@@ -433,17 +431,13 @@ async def home():
       --violet: #8b5cf6;
       --violet-strong: #6d28d9;
       --mint: #13bfa4;
-      --amber: #d88a2d;
-      --danger: #d94b6a;
       --shadow: 0 24px 60px rgba(87, 58, 139, 0.16);
     }
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: Inter, Arial, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+      font-family: Arial, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
       color: var(--text);
       background:
         linear-gradient(135deg, rgba(139, 92, 246, 0.28), transparent 36%),
@@ -461,250 +455,75 @@ async def home():
         repeating-linear-gradient(0deg, rgba(99, 74, 142, 0.04) 0 1px, transparent 1px 84px);
       mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 88%);
     }
-    .shell {
-      width: min(1000px, calc(100vw - 28px));
-      margin: 0 auto;
-      padding: 26px 0;
-    }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 16px;
-    }
-    h1 {
-      margin: 0;
-      font-size: 26px;
-      line-height: 1.2;
-      font-weight: 760;
-      letter-spacing: 0;
-    }
-    .subtitle {
-      margin: 7px 0 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
+    .shell { width: min(1000px, calc(100vw - 28px)); margin: 0 auto; padding: 26px 0; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+    h1 { margin: 0; font-size: 26px; line-height: 1.2; letter-spacing: 0; }
+    .subtitle { margin: 7px 0 0; color: var(--muted); font-size: 14px; }
     .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-width: max-content;
-      padding: 9px 11px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.72);
-      color: var(--soft);
-      font-size: 13px;
-      box-shadow: 0 10px 30px rgba(87, 58, 139, 0.1);
+      display: inline-flex; align-items: center; gap: 8px; min-width: max-content;
+      padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px;
+      background: rgba(255,255,255,.72); color: var(--soft); font-size: 13px;
+      box-shadow: 0 10px 30px rgba(87,58,139,.1);
     }
-    .dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: #757083;
-    }
-    .dot.ready {
-      background: var(--mint);
-      box-shadow: 0 0 0 4px rgba(69, 214, 181, 0.14);
-    }
-    .layout {
-      display: grid;
-      grid-template-columns: 1fr 260px;
-      gap: 14px;
-    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #9ca3af; }
+    .dot.ready { background: var(--mint); box-shadow: 0 0 0 4px rgba(19,191,164,.14); }
+    .layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; }
     .chat-panel {
-      display: grid;
-      grid-template-rows: minmax(430px, 62vh) auto;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
+      display: grid; grid-template-rows: minmax(430px, 62vh) auto; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+      box-shadow: var(--shadow); backdrop-filter: blur(18px);
     }
-    #chat {
-      overflow-y: auto;
-      padding: 18px;
-      scrollbar-color: rgba(139, 92, 246, 0.42) rgba(116, 79, 173, 0.08);
-    }
-    .message {
-      display: grid;
-      gap: 6px;
-      max-width: 82%;
-      margin: 0 0 15px;
-    }
-    .message.user {
-      margin-left: auto;
-      justify-items: end;
-    }
-    .label {
-      color: var(--muted);
-      font-size: 12px;
-    }
+    #chat { overflow-y: auto; padding: 18px; scrollbar-color: rgba(139,92,246,.42) rgba(116,79,173,.08); }
+    .message { display: grid; gap: 6px; max-width: 82%; margin: 0 0 15px; }
+    .message.user { margin-left: auto; justify-items: end; }
+    .label { color: var(--muted); font-size: 12px; }
     .bubble {
-      padding: 12px 13px;
-      border-radius: 8px;
-      line-height: 1.55;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      background: rgba(255, 255, 255, 0.76);
-      border: 1px solid rgba(116, 79, 173, 0.13);
-      color: var(--soft);
+      padding: 12px 13px; border-radius: 8px; line-height: 1.55; white-space: pre-wrap;
+      overflow-wrap: anywhere; background: rgba(255,255,255,.76);
+      border: 1px solid rgba(116,79,173,.13); color: var(--soft);
     }
     .message.user .bubble {
-      background: linear-gradient(135deg, rgba(124, 58, 237, 0.95), rgba(72, 93, 220, 0.95));
-      border-color: rgba(255, 255, 255, 0.16);
-      color: #ffffff;
+      background: linear-gradient(135deg, rgba(109,40,217,.95), rgba(79,70,229,.95));
+      border-color: rgba(255,255,255,.16); color: #fff;
     }
-    .meta {
-      color: #837592;
-      font-size: 12px;
-    }
-    .feedback {
-      display: flex;
-      gap: 6px;
-    }
-    .message.pending .bubble {
-      color: var(--muted);
-      border-style: dashed;
-      background: rgba(255, 255, 255, 0.58);
-    }
-    .thinking {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .pulse {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--violet);
-      box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.32);
-      animation: pulse 1.2s infinite;
-    }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.32); }
-      70% { box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
-    }
-    .feedback button {
-      min-width: 42px;
-      min-height: 30px;
-      padding: 4px 8px;
-      font-size: 13px;
-      color: var(--soft);
-    }
-    .composer {
-      display: grid;
-      grid-template-columns: 1fr 44px 52px;
-      gap: 8px;
-      padding: 12px;
-      border-top: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.62);
-    }
+    .meta { color: #837592; font-size: 12px; }
+    .feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .feedback button { min-width: 42px; min-height: 30px; padding: 4px 8px; font-size: 13px; color: var(--soft); }
+    .feedback-form { display: grid; grid-template-columns: 1fr auto; gap: 6px; width: min(520px, 100%); margin-top: 4px; }
+    .feedback-form input { min-height: 36px; padding: 8px 10px; font-size: 13px; }
+    .feedback-form button { min-height: 36px; padding: 0 10px; font-size: 13px; }
+    .message.pending .bubble { color: var(--muted); border-style: dashed; background: rgba(255,255,255,.58); }
+    .thinking { display: inline-flex; align-items: center; gap: 8px; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--violet); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(139,92,246,.32); } 70% { box-shadow: 0 0 0 8px rgba(139,92,246,0); } 100% { box-shadow: 0 0 0 0 rgba(139,92,246,0); } }
+    .composer { display: grid; grid-template-columns: 1fr 44px 52px; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.62); }
     input {
-      width: 100%;
-      min-width: 0;
-      padding: 12px;
-      border: 1px solid rgba(116, 79, 173, 0.2);
-      border-radius: 6px;
-      outline: none;
-      background: rgba(255, 255, 255, 0.82);
-      color: var(--text);
-      font-size: 16px;
+      width: 100%; min-width: 0; padding: 12px; border: 1px solid rgba(116,79,173,.2);
+      border-radius: 6px; outline: none; background: rgba(255,255,255,.82); color: var(--text); font-size: 16px;
     }
-    input::placeholder {
-      color: #9388a3;
-    }
-    input:focus {
-      border-color: rgba(159, 122, 234, 0.9);
-      box-shadow: 0 0 0 3px rgba(159, 122, 234, 0.16);
-    }
+    input::placeholder { color: #9388a3; }
+    input:focus { border-color: rgba(139,92,246,.9); box-shadow: 0 0 0 3px rgba(139,92,246,.16); }
     button {
-      min-width: 0;
-      padding: 0 14px;
-      border: 1px solid rgba(116, 79, 173, 0.18);
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.7);
-      color: var(--text);
-      font-size: 15px;
-      cursor: pointer;
+      min-width: 0; padding: 0 14px; border: 1px solid rgba(116,79,173,.18); border-radius: 6px;
+      background: rgba(255,255,255,.7); color: var(--text); font-size: 15px; cursor: pointer;
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
     }
-    button:hover {
-      transform: translateY(-1px);
-      border-color: rgba(159, 122, 234, 0.72);
-      background: rgba(255, 255, 255, 0.94);
-    }
-    button.primary {
-      border-color: rgba(159, 122, 234, 0.95);
-      background: linear-gradient(135deg, var(--violet-strong), #4f46e5);
-      color: #ffffff;
-    }
-    button:disabled {
-      transform: none;
-      border-color: rgba(148, 163, 184, 0.35);
-      background: rgba(148, 163, 184, 0.28);
-      color: rgba(255, 255, 255, 0.78);
-      cursor: wait;
-    }
-    aside {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.68);
-      padding: 14px;
-      align-self: start;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
-    }
-    aside h2 {
-      margin: 0 0 10px;
-      color: #2d2540;
-      font-size: 16px;
-      letter-spacing: 0;
-    }
-    .side-text {
-      margin: 0 0 12px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .chips {
-      display: grid;
-      gap: 8px;
-    }
-    .chip {
-      min-width: 0;
-      min-height: 38px;
-      padding: 8px 10px;
-      color: var(--soft);
-      font-size: 13px;
-      text-align: left;
-    }
-    .chip:nth-child(2) {
-      border-color: rgba(69, 214, 181, 0.34);
-    }
-    .chip:nth-child(4) {
-      border-color: rgba(240, 184, 110, 0.32);
-    }
+    button:hover { transform: translateY(-1px); border-color: rgba(139,92,246,.72); background: rgba(255,255,255,.94); }
+    button.primary { border-color: rgba(139,92,246,.95); background: linear-gradient(135deg, var(--violet-strong), #4f46e5); color: #fff; }
+    button:disabled { transform: none; border-color: rgba(148,163,184,.35); background: rgba(148,163,184,.28); color: rgba(255,255,255,.78); cursor: wait; }
+    aside { border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.68); padding: 14px; align-self: start; box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+    aside h2 { margin: 0 0 10px; color: #2d2540; font-size: 16px; letter-spacing: 0; }
+    .side-text { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .chips { display: grid; gap: 8px; }
+    .chip { min-width: 0; min-height: 38px; padding: 8px 10px; color: var(--soft); font-size: 13px; text-align: left; }
+    .chip:nth-child(2) { border-color: rgba(19,191,164,.34); }
+    .chip:nth-child(4) { border-color: rgba(216,138,45,.32); }
     @media (max-width: 760px) {
-      header {
-        align-items: stretch;
-        flex-direction: column;
-      }
-      .layout {
-        grid-template-columns: 1fr;
-      }
-      .message {
-        max-width: 94%;
-      }
-      .composer {
-        grid-template-columns: 1fr 44px 52px;
-      }
-      button {
-        min-height: 42px;
-      }
+      header { align-items: stretch; flex-direction: column; }
+      .layout { grid-template-columns: 1fr; }
+      .message { max-width: 94%; }
+      .composer { grid-template-columns: 1fr 44px 52px; }
+      button { min-height: 42px; }
     }
   </style>
 </head>
@@ -715,28 +534,28 @@ async def home():
         <h1>Personal Korean Chatbot</h1>
         <p class="subtitle">Violet workspace for focused Korean chat</p>
       </div>
-      <div class="status"><span id="dot" class="dot"></span><span id="statusText">상태 확인 중</span></div>
+      <div class="status"><span id="dot" class="dot"></span><span id="statusText">?? ?? ?</span></div>
     </header>
 
     <div class="layout">
       <section class="chat-panel">
         <div id="chat"></div>
         <form id="form" class="composer">
-          <input id="message" placeholder="메시지를 입력하세요" autocomplete="off" />
-          <button id="clear" type="button" title="새 세션">↺</button>
-          <button id="send" class="primary" type="submit" title="전송">↑</button>
+          <input id="message" placeholder="???? ?????" autocomplete="off" />
+          <button id="clear" type="button" title="? ??">?</button>
+          <button id="send" class="primary" type="submit" title="??">?</button>
         </form>
       </section>
 
       <aside>
         <h2>Prompt Palette</h2>
-        <p class="side-text">오늘의 대화를 가볍게 시작해보세요.</p>
+        <p class="side-text">??? ??? ??? ??????.</p>
         <div class="chips">
-          <button class="chip" type="button">안녕하세요</button>
-          <button class="chip" type="button">도움말</button>
-          <button class="chip" type="button">너는 누구야?</button>
-          <button class="chip" type="button">학습 기능이 있어?</button>
-          <button class="chip" type="button">인공지능을 쉽게 설명해줘</button>
+          <button class="chip" type="button">?????</button>
+          <button class="chip" type="button">???</button>
+          <button class="chip" type="button">?? ????</button>
+          <button class="chip" type="button">?? ??? ???</button>
+          <button class="chip" type="button">????? ?? ????</button>
         </div>
       </aside>
     </div>
@@ -781,11 +600,11 @@ async def home():
         const feedback = document.createElement("div");
         feedback.className = "feedback";
         feedback.innerHTML = `
-          <button type="button" data-rating="up">좋아요</button>
-          <button type="button" data-rating="down">싫어요</button>
+          <button type="button" data-rating="up">???</button>
+          <button type="button" data-rating="down">???</button>
         `;
         feedback.querySelectorAll("button").forEach((button) => {
-          button.addEventListener("click", () => sendFeedback(options.messageId, button.dataset.rating, feedback));
+          button.addEventListener("click", () => openFeedbackForm(options.messageId, button.dataset.rating, feedback));
         });
         wrapper.appendChild(feedback);
       }
@@ -796,22 +615,16 @@ async def home():
     }
 
     function addPendingMessage() {
-      const pending = addMessage("bot", "챗봇", "탐색중... 0초", { pending: true });
+      const pending = addMessage("bot", "??", "???... 0?", { pending: true });
       const bubble = pending.querySelector(".bubble");
-      bubble.innerHTML = `<span class="thinking"><span class="pulse"></span><span>탐색중... 0초</span></span>`;
+      bubble.innerHTML = `<span class="thinking"><span class="pulse"></span><span>???... 0?</span></span>`;
       const text = bubble.querySelector(".thinking span:last-child");
       const startedAt = Date.now();
       const timer = setInterval(() => {
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
-        text.textContent = `탐색중... ${seconds}초`;
+        text.textContent = `???... ${seconds}?`;
       }, 1000);
-      return {
-        element: pending,
-        stop() {
-          clearInterval(timer);
-          pending.remove();
-        }
-      };
+      return { element: pending, stop() { clearInterval(timer); pending.remove(); } };
     }
 
     async function loadHistory() {
@@ -820,19 +633,19 @@ async def home():
         const data = await response.json();
         chat.innerHTML = "";
         if (!data.messages.length) {
-          addMessage("bot", "챗봇", "안녕하세요! 이제 대화 기록과 피드백이 서버에 저장됩니다.");
+          addMessage("bot", "??", "?????! ?? ?? ??? ???? ??? ?????.");
           return;
         }
         data.messages.forEach((message) => {
           if (message.role === "user") {
-            addMessage("user", "나", message.content);
+            addMessage("user", "?", message.content);
           } else {
-            const meta = `${message.response_type || "assistant"} · ${message.processing_time_ms || 0}ms`;
-            addMessage("bot", "챗봇", message.content, { messageId: message.id, meta });
+            const meta = `${message.response_type || "assistant"} ? ${message.processing_time_ms || 0}ms`;
+            addMessage("bot", "??", message.content, { messageId: message.id, meta });
           }
         });
       } catch (error) {
-        addMessage("bot", "챗봇", "대화 기록을 불러오지 못했습니다. 새 대화로 시작합니다.");
+        addMessage("bot", "??", "?? ??? ???? ?????. ? ??? ?????.");
       }
     }
 
@@ -841,30 +654,50 @@ async def home():
         const response = await fetch("/health");
         const data = await response.json();
         dot.classList.toggle("ready", data.loaded);
-        statusText.textContent = data.loaded ? `Running · ${data.llm_name}` : "모델 로딩 중";
+        statusText.textContent = data.loaded ? `Running ? ${data.llm_name}` : "?? ?? ?";
       } catch (error) {
         dot.classList.remove("ready");
-        statusText.textContent = "연결 확인 필요";
+        statusText.textContent = "?? ?? ??";
       }
     }
 
-    async function sendFeedback(messageId, rating, container) {
+    function openFeedbackForm(messageId, rating, container) {
+      const ratingText = rating === "up" ? "???" : "???";
+      container.innerHTML = `
+        <div class="feedback-form">
+          <input type="text" maxlength="500" placeholder="${ratingText} ??? ?? ????? (??)" />
+          <button type="button">??</button>
+        </div>
+      `;
+      const inputEl = container.querySelector("input");
+      const buttonEl = container.querySelector("button");
+      inputEl.focus();
+      buttonEl.addEventListener("click", () => sendFeedback(messageId, rating, inputEl.value, container));
+      inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          sendFeedback(messageId, rating, inputEl.value, container);
+        }
+      });
+    }
+
+    async function sendFeedback(messageId, rating, comment, container) {
       container.querySelectorAll("button").forEach((button) => button.disabled = true);
       try {
         const response = await fetch("/feedback", {
           method: "POST",
           headers: {"Content-Type": "application/json; charset=utf-8"},
-          body: JSON.stringify({ message_id: messageId, rating })
+          body: JSON.stringify({ message_id: messageId, rating, comment: comment || null })
         });
         if (!response.ok) throw new Error("feedback failed");
-        container.textContent = rating === "up" ? "좋아요가 저장되었습니다." : "싫어요가 저장되었습니다.";
+        container.textContent = rating === "up" ? "???? ???? ???????." : "???? ???? ???????.";
       } catch (error) {
-        container.textContent = "피드백 저장에 실패했습니다.";
+        container.textContent = "??? ??? ??????.";
       }
     }
 
     async function sendMessage(message) {
-      addMessage("user", "나", message);
+      addMessage("user", "?", message);
       input.value = "";
       send.disabled = true;
       const pending = addPendingMessage();
@@ -886,17 +719,17 @@ async def home():
         const data = await response.json();
         pending.stop();
         if (!response.ok) {
-          addMessage("bot", "챗봇", data.detail || "요청 처리 중 오류가 발생했습니다.");
+          addMessage("bot", "??", data.detail || "?? ?? ? ??? ??????.");
           return;
         }
 
         sessionId = data.session_id;
         localStorage.setItem(sessionKey, sessionId);
-        const meta = `${data.response_type} · ${data.processing_time_ms}ms`;
-        addMessage("bot", "챗봇", data.bot_response, { messageId: data.message_id, meta });
+        const meta = `${data.response_type} ? ${data.processing_time_ms}ms`;
+        addMessage("bot", "??", data.bot_response, { messageId: data.message_id, meta });
       } catch (error) {
         pending.stop();
-        addMessage("bot", "챗봇", "서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.");
+        addMessage("bot", "??", "??? ???? ?????. ?? ? ?? ??????.");
       } finally {
         send.disabled = false;
         input.focus();
@@ -913,7 +746,7 @@ async def home():
       sessionId = crypto.randomUUID();
       localStorage.setItem(sessionKey, sessionId);
       chat.innerHTML = "";
-      addMessage("bot", "챗봇", "새 세션을 시작했습니다.");
+      addMessage("bot", "??", "? ??? ??????.");
       input.focus();
     });
 
