@@ -51,7 +51,7 @@ class ChatRequest(BaseModel):
     user_id: str = Field("anonymous", max_length=80, description="사용자 식별자")
     message: str = Field(..., min_length=1, max_length=800, description="사용자 메시지")
     # 최대 토큰 허용치를 300 -> 1024로 늘리고 기본값을 512로 확장했습니다.
-    max_new_tokens: int = Field(512, ge=20, le=1024, description="새로 생성할 최대 토큰 수")
+    max_new_tokens: int = Field(160, ge=20, le=512, description="새로 생성할 최대 토큰 수")
     temperature: float = Field(0.6, ge=0.1, le=1.2, description="응답 다양성")
     top_p: float = Field(0.9, ge=0.1, le=1.0, description="누적 확률 샘플링 값")
 
@@ -706,7 +706,7 @@ async def home():
             session_id: sessionId,
             user_id: "browser-user",
             message,
-            max_new_tokens: 512,
+            max_new_tokens: 160,
             temperature: 0.6,
             top_p: 0.9
           })
@@ -727,20 +727,33 @@ async def home():
         const decoder = new TextDecoder("utf-8");
         let done = false;
         let fullText = "";
+        let eventBuffer = "";
 
         while (!done) {
           const { value, done: readerDone } = await reader.read();
           done = readerDone;
+
           if (value) {
-            const chunk = decoder.decode(value, { stream: !done });
-            fullText += chunk;
-            bubble.textContent = fullText;
-            chat.scrollTop = chat.scrollHeight;
+            eventBuffer += decoder.decode(value, {stream: !done});
+
+            const parts = eventBuffer.split("\\n\\n");
+            eventBuffer = parts.pop();
+
+            for (const part of parts) {
+              if (!part.startsWith("data: ")) continue;
+              
+              const payload = JSON.parse(part.slice(6));
+              fullText += payload.text;
+              bubble.textContent = fullText;
+              chat.scrollTop = chat.scrollHeight;
+            }
           }
         }
 
         const metaEl = botMessageWrapper.querySelector(".meta");
         if (metaEl) metaEl.textContent = "완료";
+
+        await loadHistory();
 
       } catch (error) {
         pending.stop();
@@ -1004,16 +1017,25 @@ async def admin_page():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
+    stream_headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+
     session_id = ensure_session(request.session_id, request.user_id)
     save_message(session_id, "user", request.message)
 
     rule_response = get_rule_based_response(request.message)
     if rule_response:
         async def stream_rule():
-            yield rule_response
+            yield f"data: {json.dumps({'text': rule_response}, ensure_ascii=False)}\n\n" + (":" + " " * 2048 + "\n\n")
             save_message(session_id, "assistant", rule_response, "rule", MODEL_ID, 0, len(rule_response.split()))
         
-        return StreamingResponse(stream_rule(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream_rule(),
+            media_type="text/event-stream",
+            headers=stream_headers,
+          )
 
     async def wrapped_stream():
         full_response = ""
@@ -1024,7 +1046,8 @@ async def chat(request: ChatRequest):
             messages, request.max_new_tokens, request.temperature, request.top_p
         ):
             full_response += chunk
-            yield chunk
+            print(f"[STREAM CHUNK] {chunk!r}", flush=True)
+            yield f"data: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
         
         elapsed_ms = (time.time() - start_time) * 1000
         save_message(
@@ -1037,7 +1060,11 @@ async def chat(request: ChatRequest):
             tokens_generated=len(full_response.split()),
         )
 
-    return StreamingResponse(wrapped_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        wrapped_stream(),
+        media_type="text/event-stream",
+        headers=stream_headers,
+    )
 
 
 @app.get("/history/{session_id}", response_model=HistoryResponse)

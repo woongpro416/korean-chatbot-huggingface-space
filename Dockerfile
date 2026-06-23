@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY app.py README.md ./
+COPY static ./static
 
 RUN mkdir -p /app/data
 
